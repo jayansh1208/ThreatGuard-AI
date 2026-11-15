@@ -13,3 +13,5 @@ venv/
 
 *.backup
 test-output.txt
+
+windows_scan_report.json
