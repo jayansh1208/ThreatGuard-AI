@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pymongo import MongoClient
 
 from backend.app import config
-from backend.app.ai.chat_service import ChatTurn, generate_chat_turn
+from backend.app.ai.chat_service import ChatTurn, generate_chat_turn, generate_detailed_explanation
 from backend.app.ai.provider_factory import get_provider, provider_status
 from backend.app.ai.providers.base import LLMProvider, LLMResult, ProviderError
 from backend.app.ai.providers import ollama_provider, openai_provider
@@ -255,6 +255,33 @@ def test_empty_retrieval_has_no_fabricated_citation():
     assert "No relevant knowledge-base excerpts" in llm.messages[-1]["content"]
 
 
+@pytest.mark.parametrize("language,required", [("en", "Respond entirely in English"), ("hi", "Respond entirely in Hindi")])
+def test_chat_language_is_explicit_in_provider_prompt(language, required):
+    localized = FakeLLMProvider("A concise answer.")
+    turn = asyncio.run(generate_chat_turn(
+        object(), org_id="org-a", tenant_id="tenant-a", question="What does this mean?",
+        history=[], use_rag=False, provider=localized, language=language,
+    ))
+    assert turn.answer == "A concise answer."
+    assert required in localized.messages[0]["content"]
+
+
+def test_detailed_explanation_uses_only_saved_evidence_and_nine_sections():
+    provider = FakeLLMProvider("Expanded explanation.")
+    scan = {"scan_id": "scan-real", "findings": [{"title": "Observed indicator"}]}
+    result = asyncio.run(generate_detailed_explanation(
+        question="Explain the finding", answer="A short answer.", citations=[],
+        scanner_sources=[scan], provider=provider, language="hi",
+    ))
+    prompt = provider.messages[0]["content"]
+    user_data = provider.messages[1]["content"]
+    assert result == "Expanded explanation."
+    assert "विश्वास स्तर और उसका कारण" in prompt
+    assert "Respond entirely in Hindi" in prompt
+    assert "scan-real" in user_data and "Observed indicator" in user_data
+    assert "missing" in prompt.lower()
+
+
 def test_scanner_context_is_tenant_scoped_and_uses_stored_findings(chat_db):
     base = {"scan_type": "native-windows-scanner", "status": "completed", "summary": "Host requires review.",
             "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)}
@@ -382,9 +409,21 @@ def test_api_auth_owner_tenant_history_rename_delete_and_audit(
     assert sent.status_code == 200, sent.text
     assert sent.json()["citations"][0]["source"] == "tenant.md"
 
+    hindi_sent = client.post(f"/chat/sessions/{session_id}/messages", headers=headers_a,
+                             json={"content": "बताइए", "use_rag": False, "language": "hi"})
+    assert hindi_sent.status_code == 200, hindi_sent.text
+    assert hindi_sent.json()["language"] == "hi"
+    assert hindi_sent.json()["message_index"] == 3
+    stored_hindi = client.get(f"/chat/sessions/{session_id}", headers=headers_a).json()["messages"][3]
+    assert stored_hindi["language"] == "hi"
+    explained = client.post(f"/chat/sessions/{session_id}/messages/3/explain", headers=headers_a)
+    assert explained.status_code == 200, explained.text
+    assert explained.json()["language"] == "hi"
+    assert explained.json()["explanation"]
+
     detail = client.get(f"/chat/sessions/{session_id}", headers=headers_a).json()
-    assert detail["total_messages"] == 2
-    assert [item["role"] for item in detail["messages"]] == ["user", "assistant"]
+    assert detail["total_messages"] == 4
+    assert [item["role"] for item in detail["messages"]] == ["user", "assistant", "user", "assistant"]
     assert detail["messages"][1]["provider"] == "test-provider"
     assert detail["messages"][1]["citations"][0]["document_id"] == "doc-real"
     listing = client.get("/chat/sessions", headers=headers_a).json()

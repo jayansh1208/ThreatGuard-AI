@@ -36,6 +36,7 @@ class ChatMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=AI_MAX_MESSAGE_CHARS)
     use_rag: bool = True
     include_scanner_context: bool = False
+    language: Literal["en", "hi"] = "en"
     model_config = ConfigDict(extra="forbid")
 
     @field_validator("content")
@@ -79,6 +80,14 @@ class ChatTurnResponse(BaseModel):
     model: str
     token_usage: dict[str, int] | None
     rag_enabled: bool
+    language: Literal["en", "hi"] = "en"
+    message_index: int | None = None
+
+
+class ChatExplanationResponse(BaseModel):
+    explanation: str
+    language: Literal["en", "hi"]
+    message_index: int
 
 
 class StoredChatMessage(BaseModel):
@@ -90,6 +99,7 @@ class StoredChatMessage(BaseModel):
     citations: list[ChatCitation] = Field(default_factory=list)
     scanner_sources: list[ScannerSource] = Field(default_factory=list)
     token_usage: dict[str, int] | None = None
+    language: Literal["en", "hi"] = "en"
 
 
 class ChatSessionSummary(BaseModel):

@@ -15,19 +15,25 @@ def result(name, *, status="success", items=None, error_code=None, error_message
     }
 
 
+def empty_inventory():
+    return [result(name) for name in ("process_inventory", "services", "scheduled_tasks",
+                                      "installed_applications", "file_metadata", "antivirus_detections")]
+
+
 def test_failed_collectors_do_not_create_fabricated_findings(monkeypatch):
     failed = lambda name: result(name, status="failed", error_code="ACCESS_ERROR", error_message="collection denied")
     monkeypatch.setattr(scanner_service, "scan_processes", lambda: failed("processes"))
     monkeypatch.setattr(scanner_service, "scan_network_connections", lambda: failed("network"))
     monkeypatch.setattr(scanner_service, "scan_startup_items", lambda: failed("startup"))
     monkeypatch.setattr(scanner_service, "scan_defender_status", lambda: failed("windows_defender"))
+    monkeypatch.setattr(scanner_service, "inventory_collectors", lambda paths: empty_inventory())
 
     report = collect_scan_report()
 
     assert report["findings"] == []
     assert report["summary"]["score"] is None
     assert report["summary"]["severity"] == "unknown"
-    assert report["completeness"]["status"] == "failed"
+    assert report["completeness"]["status"] == "partial"
 
 
 def test_empty_successful_collectors_produce_zero_findings(monkeypatch):
@@ -35,6 +41,7 @@ def test_empty_successful_collectors_produce_zero_findings(monkeypatch):
     monkeypatch.setattr(scanner_service, "scan_network_connections", lambda: result("network"))
     monkeypatch.setattr(scanner_service, "scan_startup_items", lambda: result("startup"))
     monkeypatch.setattr(scanner_service, "scan_defender_status", lambda: result("windows_defender"))
+    monkeypatch.setattr(scanner_service, "inventory_collectors", lambda paths: empty_inventory())
 
     report = collect_scan_report()
 
@@ -57,6 +64,7 @@ def test_limit_is_applied_to_combined_report(monkeypatch):
     monkeypatch.setattr(scanner_service, "scan_network_connections", lambda: collectors[1])
     monkeypatch.setattr(scanner_service, "scan_startup_items", lambda: collectors[2])
     monkeypatch.setattr(scanner_service, "scan_defender_status", lambda: result("windows_defender"))
+    monkeypatch.setattr(scanner_service, "inventory_collectors", lambda paths: empty_inventory())
 
     report = collect_scan_report(limit=1)
 
@@ -64,6 +72,25 @@ def test_limit_is_applied_to_combined_report(monkeypatch):
     assert report["findings"][0]["title"] == "one"
     assert report["findings_collected"] == 3
     assert report["findings_included"] == 1
+
+
+def test_inventory_is_categorized_and_vendor_detections_are_distinguished(monkeypatch):
+    monkeypatch.setattr(scanner_service, "scan_processes", lambda: result("processes", items=[{"path": "C:\\app.exe"}]))
+    monkeypatch.setattr(scanner_service, "scan_network_connections", lambda: result("network", items=[{"local_port": 443}]))
+    monkeypatch.setattr(scanner_service, "scan_startup_items", lambda: result("startup", items=[{"name": "Updater"}]))
+    monkeypatch.setattr(scanner_service, "scan_defender_status", lambda: result("windows_defender"))
+    inventory = empty_inventory()
+    inventory[0] = result("process_inventory", items=[{"name": "app.exe", "path": "C:\\app.exe", "memory_mb": 12.5}])
+    inventory[-1] = result("antivirus_detections", items=[{"ThreatID": 123, "DetectionTime": "2026-11-17T00:00:00Z"}])
+    monkeypatch.setattr(scanner_service, "inventory_collectors", lambda paths: inventory)
+
+    report = collect_scan_report()
+
+    assert report["generated_at"]
+    assert report["inventory"]["network_connections"][0]["local_port"] == 443
+    assert report["inventory"]["process_inventory"][0]["memory_mb"] == 12.5
+    finding = next(item for item in report["findings"] if item["category"] == "antivirus")
+    assert finding["evidence_status"] == "confirmed_vendor_detection"
 
 
 def test_defender_access_denied_is_unknown_and_restricted(monkeypatch):
@@ -88,6 +115,7 @@ def test_failed_collectors_and_export_preserve_status_and_errors(monkeypatch, tm
     monkeypatch.setattr(scanner_service, "scan_network_connections", lambda: result("network"))
     monkeypatch.setattr(scanner_service, "scan_startup_items", lambda: result("startup"))
     monkeypatch.setattr(scanner_service, "scan_defender_status", lambda: result("windows_defender"))
+    monkeypatch.setattr(scanner_service, "inventory_collectors", lambda paths: empty_inventory())
     report = collect_scan_report()
     assert any(item["collector_name"] == "processes" and item["status"] == "failed"
                for item in report["collectors"])

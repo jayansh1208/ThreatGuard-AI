@@ -75,4 +75,26 @@ for finding in findings:
     severity = str(finding.get("severity", "unknown")).upper()
     st.markdown(f"**{severity} · {finding.get('title', 'Stored finding')}**")
     st.caption(finding.get("category", "unknown"))
+    evidence_status = finding.get("evidence_status", "suspicious_indicator")
+    st.caption("Confirmed vendor detection" if evidence_status == "confirmed_vendor_detection" else "Suspicious indicator · requires review")
     st.write(finding.get("description", "No description was stored."))
+
+inventory = details.get("inventory") or {}
+if inventory:
+    st.subheader("Collected inventory")
+    category_labels = {
+        "process_inventory": "Running processes", "services": "Windows services",
+        "scheduled_tasks": "Scheduled tasks", "installed_applications": "Installed applications",
+        "file_metadata": "Executable metadata and signatures", "antivirus_detections": "Antivirus detections",
+        "network_connections": "Active connections and listening ports", "startup_applications": "Startup applications",
+        "windows_defender_status": "Windows Defender status",
+    }
+    for category, items in inventory.items():
+        with st.expander(f"{category_labels.get(category, category.replace('_', ' ').title())} · {len(items)}"):
+            if isinstance(items, dict):
+                st.json(items, expanded=False)
+            elif not items:
+                st.caption("No records collected.")
+            else:
+                for item in items[:100]:
+                    st.json(item, expanded=False)

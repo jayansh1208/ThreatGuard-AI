@@ -18,7 +18,13 @@ from backend.app.database.schema import apply_all_schema_and_indexes
 
 
 def initialize_database(db: Optional[Database] = None) -> Dict[str, object]:
+    """Initialize all required collections, schemas, and indexes.
+
+    This function now also sets up the Cyber Threat Intelligence engine collections
+    defined in ``backend.app.intelligence.schema``.
+    """
     target_db = db if db is not None else get_db()
+    # Core collections from the original schema
     required_collections = [
         "organizations",
         "tenants",
@@ -33,19 +39,38 @@ def initialize_database(db: Optional[Database] = None) -> Dict[str, object]:
         "revoked_tokens",
         "metrics_snapshots",
     ]
-
+    # Apply the base schema definitions and indexes
     verification = apply_all_schema_and_indexes(target_db)
+    # ---------------------------------------------------------------------
+    # Cyber Threat Intelligence collections
+    # ---------------------------------------------------------------------
+    try:
+        from backend.app.intelligence.schema import INTEL_SCHEMA_MAP, INTEL_INDEX_DEFINITIONS
+        from backend.app.database.schema import create_or_update_collection, apply_indexes
+    except ImportError as exc:
+        raise RuntimeError("Intelligence schema modules could not be imported.") from exc
+    # Create/validate each intelligence collection
+    for collection_name, validator in INTEL_SCHEMA_MAP.items():
+        create_or_update_collection(target_db, collection_name, validator)
+        verification[collection_name] = collection_name in target_db.list_collection_names()
+    # Apply indexes for intelligence collections
+    for collection_name, index_specs in INTEL_INDEX_DEFINITIONS.items():
+        collection = target_db[collection_name]
+        apply_indexes(collection, index_specs)
+    # ---------------------------------------------------------------------
+    # Verify any missing core collections (they may have been created above)
     existing = set(target_db.list_collection_names())
     for collection_name in required_collections:
         if collection_name not in existing:
             verification[collection_name] = False
-
+    # ---------------------------------------------------------------------
     report = {
         "database": target_db.name,
-        "collections_verified": all(verification.get(name, False) for name in required_collections),
+        "collections_verified": all(verification.get(name, False) for name in required_collections + list(INTEL_SCHEMA_MAP.keys())),
         "collections": sorted(target_db.list_collection_names()),
     }
     return report
+
 
 
 if __name__ == "__main__":

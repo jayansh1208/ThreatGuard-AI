@@ -58,6 +58,7 @@ def create_scan(
                     "completeness": completeness,
                     "collectors": collectors,
                     "defender": payload.get("defender"),
+                    "inventory": payload.get("inventory", {}),
                 },
             }
         )
@@ -68,6 +69,7 @@ def create_scan(
         serialized["completeness"] = completeness
         serialized["collectors"] = collectors
         serialized["observation_mode"] = obs_mode
+        serialized["inventory"] = payload.get("inventory", {})
         return serialized
 
     findings = payload.get("findings") or []
@@ -99,6 +101,7 @@ def create_scan(
                     "completeness": report.get("completeness"),
                     "collectors": report.get("collectors"),
                 "defender": report.get("defender"),
+                "inventory": report.get("inventory", {}),
             },
         }
     )
@@ -109,6 +112,7 @@ def create_scan(
     serialized["completeness"] = report["completeness"]
     serialized["collectors"] = report["collectors"]
     serialized["observation_mode"] = report["observation_mode"]
+    serialized["inventory"] = report.get("inventory", {})
     return serialized
 
 

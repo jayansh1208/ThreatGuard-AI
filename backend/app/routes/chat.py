@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app import config
-from backend.app.ai.chat_service import generate_chat_turn
+from backend.app.ai.chat_service import generate_chat_turn, generate_detailed_explanation
 from backend.app.ai.provider_factory import get_provider, provider_status
 from backend.app.ai.providers.base import ProviderError
 from backend.app.ai.rate_limit import consume_chat_rate_limit
@@ -16,7 +16,7 @@ from backend.app.database.repositories import AuditLogRepository, ChatSessionRep
 from backend.app.models_chat import (
     ChatAskRequest, ChatMessageRequest, ChatSessionCreate, ChatSessionDetail,
     ChatSessionListResponse, ChatSessionRename, ChatTurnResponse,
-    ProviderStatusResponse, ProviderTestResponse,
+    ProviderStatusResponse, ProviderTestResponse, ChatExplanationResponse,
 )
 from backend.app.security import enforce_permission, get_current_user
 
@@ -147,6 +147,7 @@ async def _send_message(session_id: str, payload: ChatMessageRequest,
             get_db(), org_id=org_id, tenant_id=tenant_id, question=payload.content,
             history=session.get("messages", []), use_rag=payload.use_rag,
             include_scanner=payload.include_scanner_context, provider=provider,
+            language=payload.language,
         )
     except ProviderError as exc:
         _audit(current_user, action="chat_message_failed", resource_type="chat_session",
@@ -164,7 +165,9 @@ async def _send_message(session_id: str, payload: ChatMessageRequest,
         "role": "assistant", "content": turn.answer, "timestamp": now,
         "provider": turn.provider, "model": turn.model, "citations": turn.citations,
         "scanner_sources": turn.scanner_sources, "token_usage": turn.token_usage,
+        "language": payload.language,
     }
+    message_index = len(session.get("messages", [])) + 1
     if not repo.append_messages(session_id, [user_message, assistant_message], org_id=org_id,
                                 tenant_id=tenant_id, user_id=user_id,
                                 provider=turn.provider, model=turn.model):
@@ -179,7 +182,40 @@ async def _send_message(session_id: str, payload: ChatMessageRequest,
         "session_id": session_id, "answer": turn.answer, "citations": turn.citations,
         "scanner_sources": turn.scanner_sources, "provider": turn.provider,
         "model": turn.model, "token_usage": turn.token_usage, "rag_enabled": turn.rag_enabled,
+        "language": payload.language, "message_index": message_index,
     }
+
+
+@router.post("/sessions/{session_id}/messages/{message_index}/explain", response_model=ChatExplanationResponse)
+async def explain_message(
+    session_id: str, message_index: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Generate a separate, expanded explanation from a user's saved answer evidence."""
+    enforce_permission(current_user, "write_threats")
+    _rate_check(current_user)
+    org_id, tenant_id, user_id = _identity(current_user)
+    session = _repo().get_for_user(session_id, org_id=org_id, tenant_id=tenant_id, user_id=user_id)
+    messages = (session or {}).get("messages", [])
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    if message_index < 1 or message_index >= len(messages) or messages[message_index].get("role") != "assistant":
+        raise HTTPException(status_code=404, detail="Assistant message not found")
+    assistant = messages[message_index]
+    user_message = messages[message_index - 1] if message_index else {}
+    try:
+        text = await generate_detailed_explanation(
+            question=str(user_message.get("content") or ""), answer=str(assistant.get("content") or ""),
+            citations=assistant.get("citations") or [], scanner_sources=assistant.get("scanner_sources") or [],
+            language=assistant.get("language") if assistant.get("language") in {"en", "hi"} else "en",
+            provider=get_provider(),
+        )
+    except ProviderError as exc:
+        raise _provider_exception(exc) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={"code": "chat_processing_failed",
+                            "message": "The detailed explanation could not be generated."}) from exc
+    return {"explanation": text, "language": assistant.get("language", "en"), "message_index": message_index}
 
 
 @router.post("/sessions/{session_id}/messages", response_model=ChatTurnResponse)

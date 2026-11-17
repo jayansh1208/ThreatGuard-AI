@@ -18,6 +18,7 @@ from backend.app.routes.auth import router as auth_router
 from backend.app.routes.chat import router as chat_router
 from backend.app.routes.dashboard import router as dashboard_router
 from backend.app.routes.health import health_router
+from backend.app.routes.intelligence import router as intelligence_router
 from backend.app.routes.knowledge import router as knowledge_router
 from backend.app.routes.organizations import router as organizations_router
 from backend.app.routes.scanner import router as scanner_router
@@ -48,6 +49,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(dashboard_router)
 app.include_router(health_router)
+app.include_router(intelligence_router)
 app.include_router(knowledge_router)
 app.include_router(organizations_router)
 app.include_router(scanner_router)

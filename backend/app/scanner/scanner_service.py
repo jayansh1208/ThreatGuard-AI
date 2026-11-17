@@ -12,6 +12,7 @@ from backend.app.scanner.network_scanner import scan_network_connections
 from backend.app.scanner.process_scanner import scan_processes
 from backend.app.scanner.risk_engine import classify_risk
 from backend.app.scanner.startup_scanner import scan_startup_items
+from backend.app.scanner.system_inventory import inventory_collectors
 
 
 def _normalize_finding(item: dict[str, Any]) -> dict[str, Any]:
@@ -20,6 +21,7 @@ def _normalize_finding(item: dict[str, Any]) -> dict[str, Any]:
     finding.setdefault("category", "unknown")
     finding.setdefault("title", "Unlabeled finding")
     finding.setdefault("description", "No description provided.")
+    finding.setdefault("evidence_status", "suspicious_indicator")
     return finding
 
 
@@ -58,10 +60,33 @@ def collect_scan_report(
     else:
         collector_results = [scan_processes(), scan_network_connections(), scan_startup_items()]
         defender = scan_defender_status()
+        observed_paths = [str(item.get("path")) for item in collector_results[0].get("items", []) + collector_results[2].get("items", []) if item.get("path")]
+        inventory_results = inventory_collectors(observed_paths)
+        antivirus = next((item for item in inventory_results if item.get("collector_name") == "antivirus_detections"), {})
+        for detection in antivirus.get("items", []):
+            # A result reported by Defender is labeled as a vendor detection, not inferred from heuristics.
+            detection_id = detection.get("ThreatID") or detection.get("id") or "unknown"
+            antivirus.setdefault("findings", []).append({
+                "severity": "high", "category": "antivirus", "evidence_status": "confirmed_vendor_detection",
+                "title": f"Windows antivirus reported detection {detection_id}",
+                "description": "Windows antivirus returned a detection record. Review the recorded Defender result for its status and action.",
+            })
+        all_collectors = [*collector_results, defender, *inventory_results]
         collectors = [{key: result.get(key) for key in (
             "collector_name", "status", "items_collected", "error_code", "error_message", "scanned_at")}
-            for result in [*collector_results, defender]]
-        all_findings = [_normalize_finding(item) for result in [*collector_results, defender] for item in result.get("findings", [])]
+            for result in all_collectors]
+        all_findings = [_normalize_finding(item) for result in [*collector_results, defender, antivirus] for item in result.get("findings", [])]
+        # De-duplicate overlapping detections while preserving first observed evidence.
+        unique_findings = {}
+        for finding in all_findings:
+            key = (finding.get("category"), finding.get("title"), finding.get("description"))
+            unique_findings.setdefault(key, finding)
+        all_findings = list(unique_findings.values())
+        inventory = {result["collector_name"]: result.get("items", []) for result in inventory_results}
+        inventory["network_connections"] = collector_results[1].get("items", [])
+        inventory["startup_applications"] = collector_results[2].get("items", [])
+        inventory["windows_defender_status"] = {key: defender.get(key) for key in (
+            "status", "available", "enabled", "defender_status", "error_code", "scanned_at")}
         observation_mode = "live"
 
     safe_limit = max(0, limit)
@@ -84,6 +109,7 @@ def collect_scan_report(
         "observation_mode": observation_mode, "status": "completed",
         "generated_at": generated_at, "completeness": coverage,
         "summary": summary, "findings": included_findings,
+        "inventory": inventory if observation_mode == "live" else {},
         "findings_collected": len(all_findings), "findings_included": len(included_findings),
         "collectors": collectors, "defender": defender,
     }
@@ -110,6 +136,6 @@ def submit_scan_report(report: dict[str, Any], db=None, *, org_id: str | None = 
         "summary": report["summary"]["summary"],
         "details": {key: report.get(key) for key in (
             "host", "source", "observation_mode", "generated_at", "summary", "findings",
-            "findings_collected", "findings_included", "completeness", "collectors", "defender")},
+            "findings_collected", "findings_included", "completeness", "collectors", "defender", "inventory")},
     }
     return repo.create(payload)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 IS_WINDOWS = os.name == "nt"
+logger = logging.getLogger(__name__)
 
 def scan_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -30,6 +32,7 @@ def run_powershell_collector(
     command: str,
     parser: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
     detector: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    timeout_seconds: int = 20,
 ) -> dict[str, Any]:
     timestamp = scan_timestamp()
     if not IS_WINDOWS:
@@ -41,7 +44,7 @@ def run_powershell_collector(
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False, timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
         return {
@@ -50,12 +53,14 @@ def run_powershell_collector(
             "scanned_at": timestamp, "items": [], "findings": [],
         }
     except subprocess.TimeoutExpired:
+        logger.warning("Scanner collector %s timed out", collector_name)
         return {
             "collector_name": collector_name, "status": "failed", "items_collected": 0,
             "error_code": "COLLECTOR_TIMEOUT", "error_message": "PowerShell collection timed out.",
             "scanned_at": timestamp, "items": [], "findings": [],
         }
     except OSError as exc:
+        logger.warning("Scanner collector %s could not start: %s", collector_name, type(exc).__name__)
         return {
             "collector_name": collector_name, "status": "failed", "items_collected": 0,
             "error_code": "PROCESS_LAUNCH_ERROR", "error_message": "PowerShell could not be started.",
@@ -65,6 +70,7 @@ def run_powershell_collector(
     if result.returncode != 0:
         raw_error = (result.stderr or result.stdout or "").strip()
         restricted = any(token in raw_error.lower() for token in ("access denied", "permissiondenied", "0x80041003", "unauthorized"))
+        logger.warning("Scanner collector %s returned %s", collector_name, "access denied" if restricted else f"exit {result.returncode}")
         message = (f"Access to {collector_name} data was denied." if restricted
                    else f"PowerShell collector exited with code {result.returncode}.")
         return {

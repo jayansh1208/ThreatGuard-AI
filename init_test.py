@@ -1,0 +1,1 @@
+import os, sys\nsys.path.insert(0, os.path.abspath(os.path.join('backend','app')) )\nfrom backend.app.database.init_db import initialize_database\nfrom backend.app.database.connection import get_db\ninitialize_database(get_db())\nprint('Init done')

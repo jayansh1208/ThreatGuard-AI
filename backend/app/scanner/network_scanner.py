@@ -73,7 +73,10 @@ def detect_suspicious_network(items: list[dict[str, Any]]) -> list[dict[str, Any
 def parse_network_list(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{
         "local_address": item.get("local_address") or item.get("LocalAddress") or "unknown",
+        "local_port": item.get("local_port") or item.get("LocalPort"),
         "remote_address": item.get("remote_address") or item.get("RemoteAddress") or "unknown",
+        "remote_port": item.get("remote_port") or item.get("RemotePort"),
+        "process_id": item.get("process_id") or item.get("OwningProcess"),
         "state": item.get("state") or item.get("State") or "unknown",
         "severity": item.get("severity") or "medium", "category": "network",
         "title": item.get("title") or f"Network connection: {item.get('LocalAddress') or item.get('local_address') or 'unknown'}",
@@ -82,7 +85,7 @@ def parse_network_list(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def scan_network_connections(limit: int | None = None) -> dict[str, Any]:
-    command = "ConvertTo-Json -InputObject @(Get-NetTCPConnection | Select-Object LocalAddress, RemoteAddress, State) -Depth 4 -Compress"
+    command = "ConvertTo-Json -InputObject @(Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess, State) -Depth 4 -Compress"
     result = run_powershell_collector("network", command, parse_network_list, detector=detect_suspicious_network)
     if limit is not None:
         if "items" in result:

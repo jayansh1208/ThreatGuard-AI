@@ -17,6 +17,7 @@ def build_prompt(
     *, question: str, history: list[dict[str, Any]], citations: list[dict[str, Any]],
     scanner_sources: list[dict[str, Any]], max_context_chars: int, history_window: int,
     rag_requested: bool, scanner_requested: bool,
+    language: str = "en",
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Bound history/evidence and return exactly the source cards actually passed to the LLM."""
     remaining = max(0, max_context_chars - len(question))
@@ -84,7 +85,9 @@ def build_prompt(
         user_parts.append("No tenant-scoped scanner record was found for this request.")
     user_parts.append(f"Analyst question:\n{question}")
 
-    messages = [{"role": "system", "content": SECURITY_ANALYST_SYSTEM_PROMPT}]
+    language_rule = ("Respond entirely in Hindi using Devanagari. Keep technical terms (malware, IP address, process ID, hash, CVE), code, file paths, hashes, and technical identifiers unchanged."
+                     if language == "hi" else "Respond entirely in English.")
+    messages = [{"role": "system", "content": SECURITY_ANALYST_SYSTEM_PROMPT + "\n\n" + language_rule}]
     messages.extend(safe_history)
     messages.append({"role": "user", "content": "\n".join(user_parts)})
     return messages, included_citations, included_scanner

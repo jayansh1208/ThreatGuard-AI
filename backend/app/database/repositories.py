@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from bson import ObjectId
+from bson.objectid import ObjectId
+
 from bson.errors import InvalidId
 from pymongo.database import Database
 

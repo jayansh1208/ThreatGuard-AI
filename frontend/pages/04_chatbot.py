@@ -98,6 +98,9 @@ with st.sidebar:
             st.caption("Create a conversation first.")
 
 active_id = st.session_state.get("chat_active_id")
+language = st.selectbox("Response language / उत्तर की भाषा", ["English", "हिन्दी"], index=0,
+                        key="chat_language", help="Applies to new answers and detailed explanations.")
+language_code = "hi" if language == "हिन्दी" else "en"
 if not active_id:
     st.info("Create a conversation from the sidebar to start. Answers cite only retrieved tenant-visible sources.")
 else:
@@ -109,7 +112,7 @@ else:
     if not history.ok:
         show_api_error(history, "Conversation history could not be loaded.")
         st.stop()
-    for message in history.json().get("messages", []):
+    for message_index, message in enumerate(history.json().get("messages", [])):
         with st.chat_message("assistant" if message.get("role") == "assistant" else "user"):
             st.markdown(message.get("content", ""))
             if message.get("provider"):
@@ -126,6 +129,25 @@ else:
                     for finding in scan.get("findings", []):
                         st.markdown(f"**{str(finding.get('severity', 'unknown')).upper()} · {finding.get('title', 'Stored finding')}**")
                         st.caption(finding.get("description", ""))
+            if message.get("role") == "assistant":
+                detail_key = f"chat_detail_{active_id}_{message_index}"
+                detail = st.session_state.get(detail_key)
+                if st.button("विस्तार से समझाएँ" if message.get("language") == "hi" else "Explain in Detail",
+                             key=f"chat_detail_button_{active_id}_{message_index}"):
+                    with st.spinner("विस्तृत उत्तर तैयार हो रहा है…" if message.get("language") == "hi" else "Preparing detailed explanation…"):
+                        try:
+                            explained = api_request("POST", f"/chat/sessions/{active_id}/messages/{message_index}/explain", timeout=180)
+                        except requests.RequestException:
+                            st.error("विस्तृत उत्तर उपलब्ध नहीं है।" if message.get("language") == "hi" else "The detailed explanation is unavailable.")
+                        else:
+                            if explained.ok:
+                                st.session_state[detail_key] = explained.json().get("explanation", "")
+                                st.rerun()
+                            show_api_error(explained, "विस्तृत उत्तर तैयार नहीं हुआ।" if message.get("language") == "hi" else "The detailed explanation could not be generated.")
+                if detail:
+                    with st.container(border=True):
+                        st.markdown("### विस्तृत व्याख्या" if message.get("language") == "hi" else "### Detailed explanation")
+                        st.markdown(detail)
 
 use_rag = st.checkbox("Retrieve matching knowledge-base excerpts", value=True)
 include_scanner = st.checkbox("Include latest stored scanner records", value=False)
@@ -146,7 +168,8 @@ if question:
         try:
             response = api_request(
                 "POST", f"/chat/sessions/{active_id}/messages",
-                json={"content": question, "use_rag": use_rag, "include_scanner_context": include_scanner}, timeout=180,
+                json={"content": question, "use_rag": use_rag, "include_scanner_context": include_scanner,
+                      "language": language_code}, timeout=180,
             )
         except requests.RequestException:
             st.error("The backend is unavailable. The message was not sent.")

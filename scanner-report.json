@@ -1,0 +1,101 @@
+{
+  "scan_id": "scan-20261116071218577307",
+  "host": "windows-host",
+  "scanner_name": "native-windows-scanner",
+  "source": "native_windows_cli",
+  "observation_mode": "live",
+  "status": "completed",
+  "generated_at": "2026-11-16T07:12:12.105475+00:00",
+  "completeness": {
+    "status": "complete",
+    "complete": true,
+    "collectors_total": 4,
+    "collectors_succeeded": 4,
+    "collectors_failed": 0,
+    "coverage_applicable": true
+  },
+  "summary": {
+    "severity": "high",
+    "total_findings": 2,
+    "score": 5,
+    "highest_risk": "Service installed in user profile: NativePushService",
+    "summary": "Host requires review because at least one high-risk indicator was detected.",
+    "counts": {
+      "low": 0,
+      "medium": 1,
+      "high": 1,
+      "critical": 0
+    },
+    "coverage_incomplete": false
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "category": "process",
+      "title": "Service installed in user profile: NativePushService",
+      "description": "Service 'Wondershare Native Push Service' points to a user-writable path: '\"C:\\Users\\HP\\AppData\\Local\\Wondershare\\Wondershare NativePush\\WsNativePushService.exe\"'."
+    },
+    {
+      "severity": "medium",
+      "category": "process",
+      "title": "Unquoted service path: vgc",
+      "description": "Service 'vgc' has an unquoted binary path with spaces: 'C:\\Program Files\\Riot Vanguard\\vgc.exe'."
+    }
+  ],
+  "findings_collected": 2,
+  "findings_included": 2,
+  "collectors": [
+    {
+      "collector_name": "processes",
+      "status": "success",
+      "items_collected": 358,
+      "error_code": null,
+      "error_message": null,
+      "scanned_at": "2026-11-16T07:12:12.105475+00:00"
+    },
+    {
+      "collector_name": "network",
+      "status": "success",
+      "items_collected": 171,
+      "error_code": null,
+      "error_message": null,
+      "scanned_at": "2026-11-16T07:12:14.362920+00:00"
+    },
+    {
+      "collector_name": "startup",
+      "status": "success",
+      "items_collected": 15,
+      "error_code": null,
+      "error_message": null,
+      "scanned_at": "2026-11-16T07:12:17.098613+00:00"
+    },
+    {
+      "collector_name": "windows_defender",
+      "status": "success",
+      "items_collected": 1,
+      "error_code": null,
+      "error_message": null,
+      "scanned_at": "2026-11-16T07:12:17.557691+00:00"
+    }
+  ],
+  "defender": {
+    "collector_name": "windows_defender",
+    "items_collected": 1,
+    "scanned_at": "2026-11-16T07:12:17.557691+00:00",
+    "findings": [],
+    "status": "success",
+    "error_code": null,
+    "error_message": null,
+    "available": true,
+    "enabled": true,
+    "defender_status": "enabled",
+    "details": {
+      "AMServiceEnabled": true,
+      "AntivirusEnabled": true,
+      "AntispywareEnabled": true,
+      "NISEnabled": true,
+      "AntivirusSignatureAge": 0,
+      "ProductStatus": 524288
+    }
+  }
+}
