@@ -22,12 +22,69 @@ from backend.app.intelligence.config import (
     SIGMA_MAX_RULES,
     SIGMA_REPOSITORY,
 )
+from backend.app.database.connection import get_db
+from backend.app.intelligence.search import (
+    get_intelligence_record,
+    intelligence_statistics,
+    list_relationships,
+    search_intelligence,
+)
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
 
 def _tenant_context(current_user: dict) -> tuple[str, str]:
     return current_user["org_id"], current_user["tenant_id"]
+
+
+@router.get("/search", summary="Search intelligence records")
+def search_records(
+    q: str = Query(..., min_length=1, max_length=1000),
+    record_type: list[str] | None = Query(default=None),
+    page: int = Query(default=1, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    return search_intelligence(get_db(), org_id=org_id, tenant_id=tenant_id,
+                               query=q, record_types=record_type,
+                               page=page, page_size=page_size)
+
+
+@router.get("/records/{record_type}/{record_id}", summary="Get an intelligence record")
+def get_record(record_type: str, record_id: str,
+               current_user: dict = Depends(get_current_user)) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    record = get_intelligence_record(get_db(), org_id=org_id, tenant_id=tenant_id,
+                                     record_type=record_type, record_id=record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Intelligence record not found")
+    return record
+
+
+@router.get("/records/{record_type}/{record_id}/relationships", summary="List record relationships")
+def get_record_relationships(
+    record_type: str,
+    record_id: str,
+    page: int = Query(default=1, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
+    inferred: bool | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    return list_relationships(get_db(), org_id=org_id, tenant_id=tenant_id,
+                             record_type=record_type, record_id=record_id,
+                             page=page, page_size=page_size, inferred=inferred)
+
+
+@router.get("/statistics", summary="Get intelligence record counts")
+def get_statistics(current_user: dict = Depends(get_current_user)) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    return intelligence_statistics(get_db(), org_id=org_id, tenant_id=tenant_id)
 
 
 @router.post("/mitre", summary="Ingest MITRE ATT&CK dataset")

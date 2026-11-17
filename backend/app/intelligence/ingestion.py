@@ -7,6 +7,7 @@ Idempotent upserts are performed in batches defined by
 
 import datetime
 import logging
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -261,12 +262,33 @@ def _process_capec_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         capec_id = item.get("capec-id")
         if not capec_id:
             continue
+        # Keep technique links only when the imported CAPEC item explicitly
+        # supplies them. CAPEC datasets vary in their field naming.
+        raw_techniques = next((item.get(key) for key in (
+            "technique_ids", "technique-ids", "attack_technique_ids", "related_techniques",
+        ) if item.get(key) is not None), [])
+        if isinstance(raw_techniques, dict):
+            raw_techniques = raw_techniques.get("technique", raw_techniques.get("items", []))
+        if not isinstance(raw_techniques, list):
+            raw_techniques = [raw_techniques]
+        technique_ids = []
+        for value in raw_techniques:
+            candidate = value.get("technique_id") or value.get("external_id") or value.get("id") if isinstance(value, dict) else value
+            if isinstance(candidate, str) and re.fullmatch(r"T\d{4}(?:\.\d{3})?", candidate, re.IGNORECASE):
+                technique_ids.append(candidate.upper())
+        raw_references = item.get("references") or item.get("external_references") or []
+        references = []
+        if isinstance(raw_references, list):
+            for reference in raw_references:
+                url_value = reference.get("url") if isinstance(reference, dict) else reference
+                if isinstance(url_value, str) and url_value.startswith(("https://", "http://")):
+                    references.append(url_value)
         record = {
             "pattern_id": f"CAPEC-{capec_id}",
             "name": item.get("name", ""),
             "description": item.get("summary", ""),
-            "technique_ids": [],
-            "references": [],
+            "technique_ids": list(dict.fromkeys(technique_ids)),
+            "references": list(dict.fromkeys(references)),
             "created_at": _now(),
             "updated_at": _now(),
         }
