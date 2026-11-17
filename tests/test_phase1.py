@@ -239,6 +239,26 @@ def test_auth_registration_and_successful_login(
     ) >= 1
 
 
+def test_login_requires_tenant_context_when_email_is_ambiguous(test_db, create_test_user):
+    auth_routes.get_db = lambda: test_db
+    security_module.get_db = lambda: test_db
+    app = TestClient(app_module.app)
+    create_test_user(test_db, org_id="org-1", tenant_id="tenant-a",
+                     email="shared@example.com", password="TenantA-password-1")
+    create_test_user(test_db, org_id="org-1", tenant_id="tenant-b",
+                     email="shared@example.com", password="TenantB-password-2")
+
+    ambiguous = app.post("/auth/login", json={"email": "shared@example.com", "password": "TenantB-password-2"})
+    assert ambiguous.status_code == 401
+    specific = app.post("/auth/login", json={"email": "shared@example.com", "password": "TenantB-password-2",
+                                              "org_id": "org-1", "tenant_id": "tenant-b"})
+    assert specific.status_code == 200
+    assert specific.json()["user"]["tenant_id"] == "tenant-b"
+    partial_context = app.post("/auth/login", json={"email": "shared@example.com", "password": "TenantB-password-2",
+                                                     "tenant_id": "tenant-b"})
+    assert partial_context.status_code == 422
+
+
 def test_incorrect_password_and_missing_authentication(test_db):
     auth_routes.get_db = lambda: test_db
     security_module.get_db = lambda: test_db

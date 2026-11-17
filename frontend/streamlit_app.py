@@ -15,6 +15,7 @@ if can_read(user):
     pages.extend([
         st.Page("pages/02_scanner.py", title="Windows Security Scanner", icon="🔎"),
         st.Page("pages/03_knowledge_base.py", title="Knowledge Base", icon="📚"),
+        st.Page("pages/06_intelligence_dashboard.py", title="Intelligence Dashboard", icon="🧠"),
     ])
 if can_write(user):
     pages.append(st.Page("pages/04_chatbot.py", title="AI Chatbot", icon="💬"))

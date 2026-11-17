@@ -102,7 +102,7 @@ def public_registration_disabled() -> None:
 def login_user(payload: UserLogin) -> Dict[str, Any]:
     db = get_db()
     repo = UserRepository(db)
-    user = repo.get_by_email(payload.email)
+    user = repo.get_by_email(payload.email, org_id=payload.org_id, tenant_id=payload.tenant_id)
 
     if user is None or not verify_password(payload.password, user.get("password_hash", "")):
         AuditLogRepository(db).log(

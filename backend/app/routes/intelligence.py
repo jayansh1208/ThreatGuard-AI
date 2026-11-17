@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from backend.app.security import enforce_permission, get_current_user
 from backend.app.intelligence.ingestion import (
     ingest_capec,
@@ -29,6 +29,8 @@ from backend.app.intelligence.search import (
     list_relationships,
     search_intelligence,
 )
+from backend.app.intelligence.urls import safe_source_url
+from backend.app.intelligence.config import INTEL_DATASET_SOURCES, INTEL_INGESTION_JOBS
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 
@@ -87,6 +89,41 @@ def get_statistics(current_user: dict = Depends(get_current_user)) -> dict:
     return intelligence_statistics(get_db(), org_id=org_id, tenant_id=tenant_id)
 
 
+@router.get("/jobs", summary="List tenant intelligence ingestion jobs")
+def list_ingestion_jobs(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    collection = get_db()[INTEL_INGESTION_JOBS]
+    scope = {"org_id": org_id, "tenant_id": tenant_id}
+    total = int(collection.count_documents(scope))
+    rows = list(collection.find(scope, {"_id": 0}).sort("started_at", -1)
+                 .skip((page - 1) * page_size).limit(page_size))
+    return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+
+@router.get("/sources", summary="List tenant intelligence data sources")
+def list_dataset_sources(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    enforce_permission(current_user, "read_threats")
+    org_id, tenant_id = _tenant_context(current_user)
+    collection = get_db()[INTEL_DATASET_SOURCES]
+    scope = {"org_id": org_id, "tenant_id": tenant_id}
+    total = int(collection.count_documents(scope))
+    rows = list(collection.find(scope, {"_id": 0}).sort("name", 1)
+                 .skip((page - 1) * page_size).limit(page_size))
+    for row in rows:
+        if "url" in row:
+            row["url"] = safe_source_url(row["url"])
+    return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+
 @router.post("/mitre", summary="Ingest MITRE ATT&CK dataset")
 def trigger_mitre_ingestion(
     url: str | None = Query(default=None, description="Override MITRE ATT&CK URL"),
@@ -98,7 +135,7 @@ def trigger_mitre_ingestion(
     try:
         result = ingest_mitre_attack(org_id, tenant_id, source_url)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="MITRE ATT&CK ingestion failed.") from exc
     return result
 
 
@@ -113,14 +150,14 @@ def trigger_capec_ingestion(
     try:
         result = ingest_capec(org_id, tenant_id, source_url)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="CAPEC ingestion failed.") from exc
     return result
 
 
 @router.post("/nvd", summary="Ingest NVD CVE dataset")
 def trigger_nvd_ingestion(
     url: str | None = Query(default=None, description="Override NVD API URL"),
-    api_key: str | None = Query(default=None, description="Optional NVD API key"),
+    api_key: str | None = Header(default=None, alias="X-NVD-API-Key", description="Optional NVD API key; never send credentials in a URL"),
     page_size: int | None = Query(default=None, description="NVD page size"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
@@ -136,7 +173,7 @@ def trigger_nvd_ingestion(
             page_size=page_size or NVD_PAGE_SIZE,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="NVD ingestion failed.") from exc
     return result
 
 
@@ -151,7 +188,7 @@ def trigger_cisa_ingestion(
     try:
         result = ingest_cisa_kev(org_id, tenant_id, source_url)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="CISA KEV ingestion failed.") from exc
     return result
 
 
@@ -173,5 +210,5 @@ def trigger_sigma_ingestion(
             max_rules=max_rules or SIGMA_MAX_RULES,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Sigma ingestion failed.") from exc
     return result

@@ -53,6 +53,12 @@ def initialize_database(db: Optional[Database] = None) -> Dict[str, object]:
     for collection_name, validator in INTEL_SCHEMA_MAP.items():
         create_or_update_collection(target_db, collection_name, validator)
         verification[collection_name] = collection_name in target_db.list_collection_names()
+    # Dataset source metadata is tenant-owned now. Remove the legacy global
+    # source_id uniqueness constraint so each tenant can maintain its own row.
+    sources = target_db["dataset_sources"]
+    for index in sources.list_indexes():
+        if index.get("key") == {"source_id": 1} and index.get("unique"):
+            sources.drop_index(index["name"])
     # Apply indexes for intelligence collections
     for collection_name, index_specs in INTEL_INDEX_DEFINITIONS.items():
         collection = target_db[collection_name]

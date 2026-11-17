@@ -15,6 +15,8 @@ router = APIRouter(prefix="/organizations", tags=["organizations"])
 @router.post("", status_code=201)
 def create_organization(payload: OrganizationCreate, current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     enforce_permission(current_user, "manage_roles")
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Only a super administrator can create organizations")
     repo = OrganizationRepository(get_db())
     record = repo.create(payload.model_dump())
     return serialize_document(record)

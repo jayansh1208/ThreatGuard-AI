@@ -18,6 +18,7 @@ import yaml
 from pymongo import UpdateOne
 
 from backend.app.database.connection import get_db
+from backend.app.intelligence.urls import safe_source_url
 from backend.app.intelligence.config import (
     CISA_KEV_URL,
     INGESTION_BATCH_SIZE,
@@ -47,6 +48,12 @@ def _now() -> datetime.datetime:
     return datetime.datetime.utcnow()
 
 
+def _safe_error_message(error: Exception) -> str:
+    """Avoid returning URL query parameters that may contain caller credentials."""
+    message = str(error)
+    return re.sub(r"https?://[^\s\"'<>]+", lambda match: match.group(0).split("?", 1)[0] + ("?[redacted]" if "?" in match.group(0) else ""), message)[:1000]
+
+
 def _upsert_bulk(collection_name: str, operations: List[UpdateOne]):
     if not operations:
         return 0
@@ -55,11 +62,13 @@ def _upsert_bulk(collection_name: str, operations: List[UpdateOne]):
     return result.upserted_count + result.modified_count
 
 
-def _record_dataset_source(source_id: str, name: str, url: str, metadata: Dict[str, Any] | None = None) -> None:
+def _record_dataset_source(source_id: str, name: str, url: str, org_id: str, tenant_id: str,
+                           metadata: Dict[str, Any] | None = None) -> None:
     db = get_db()
     db[INTEL_DATASET_SOURCES].update_one(
-        {"source_id": source_id},
-        {"$set": {"name": name, "url": url, "last_imported_at": _now(), "metadata": metadata or {}}},
+        {"source_id": source_id, "org_id": org_id, "tenant_id": tenant_id},
+        {"$set": {"name": name, "url": safe_source_url(url), "org_id": org_id, "tenant_id": tenant_id,
+                   "last_imported_at": _now(), "metadata": metadata or {}}},
         upsert=True,
     )
 
@@ -208,6 +217,8 @@ def ingest_mitre_attack(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]
     job_doc = {
         "job_id": job_id,
         "source_id": "mitre_attack",
+        "org_id": org_id,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now(),
         "record_count": 0,
@@ -233,10 +244,10 @@ def ingest_mitre_attack(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]
                 ops.clear()
         if ops:
             _upsert_bulk(INTEL_ATTACK_TECHNIQUES, ops)
-        source_filter = {"source_id": "mitre_attack"}
+        source_filter = {"source_id": "mitre_attack", "org_id": org_id, "tenant_id": tenant_id}
         db[INTEL_DATASET_SOURCES].update_one(
             source_filter,
-            {"$set": {"name": "MITRE ATT&CK", "url": url, "last_imported_at": _now()}},
+            {"$set": {"name": "MITRE ATT&CK", "url": safe_source_url(url), "last_imported_at": _now()}},
             upsert=True,
         )
         db[INTEL_INGESTION_JOBS].update_one(
@@ -245,12 +256,12 @@ def ingest_mitre_attack(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]
         )
         return {"job_id": job_id, "status": "completed", "record_count": total}
     except Exception as exc:
-        logger.exception("MITRE ATT&CK ingestion failed")
+        logger.error("MITRE ATT&CK ingestion failed: %s", _safe_error_message(exc))
         db[INTEL_INGESTION_JOBS].update_one(
             {"job_id": job_id},
-            {"$set": {"status": "failed", "completed_at": _now(), "error_message": str(exc)}},
+            {"$set": {"status": "failed", "completed_at": _now(), "error_message": _safe_error_message(exc)}},
         )
-        return {"job_id": job_id, "status": "failed", "error": str(exc)}
+        return {"job_id": job_id, "status": "failed", "error": _safe_error_message(exc)}
 
 # ---------------------------------------------------------------------------
 # CAPEC ingestion
@@ -302,6 +313,8 @@ def ingest_capec(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]:
     job_doc = {
         "job_id": job_id,
         "source_id": "capec",
+        "org_id": org_id,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now(),
         "record_count": 0,
@@ -327,8 +340,8 @@ def ingest_capec(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]:
         if ops:
             _upsert_bulk(INTEL_ATTACK_PATTERNS, ops)
         db[INTEL_DATASET_SOURCES].update_one(
-            {"source_id": "capec"},
-            {"$set": {"name": "CAPEC", "url": url, "last_imported_at": _now()}},
+            {"source_id": "capec", "org_id": org_id, "tenant_id": tenant_id},
+            {"$set": {"name": "CAPEC", "url": safe_source_url(url), "org_id": org_id, "tenant_id": tenant_id, "last_imported_at": _now()}},
             upsert=True,
         )
         db[INTEL_INGESTION_JOBS].update_one(
@@ -337,12 +350,12 @@ def ingest_capec(org_id: str, tenant_id: str, url: str) -> Dict[str, Any]:
         )
         return {"job_id": job_id, "status": "completed", "record_count": total}
     except Exception as exc:
-        logger.exception("CAPEC ingestion failed")
+        logger.error("CAPEC ingestion failed: %s", _safe_error_message(exc))
         db[INTEL_INGESTION_JOBS].update_one(
             {"job_id": job_id},
-            {"$set": {"status": "failed", "completed_at": _now(), "error_message": str(exc)}},
+            {"$set": {"status": "failed", "completed_at": _now(), "error_message": _safe_error_message(exc)}},
         )
-        return {"job_id": job_id, "status": "failed", "error": str(exc)}
+        return {"job_id": job_id, "status": "failed", "error": _safe_error_message(exc)}
 
 # ---------------------------------------------------------------------------
 # NVD CVE ingestion
@@ -406,7 +419,8 @@ def _build_nvd_record(org_id: str, tenant_id: str, cve_item: Dict[str, Any], sou
         raise ValueError("NVD record missing CVE identifier")
     cvss = _extract_nvd_cvss(cve_item)
     cpe_uris = _extract_cpe_uris(cve_item)
-    source_provenance = [{"source_id": "nvd", "name": "NVD", "url": source_url}]
+    public_source_url = safe_source_url(source_url)
+    source_provenance = [{"source_id": "nvd", "name": "NVD", "url": public_source_url}]
     doc = {
         "org_id": org_id,
         "tenant_id": tenant_id,
@@ -421,7 +435,7 @@ def _build_nvd_record(org_id: str, tenant_id: str, cve_item: Dict[str, Any], sou
         "cpe": cpe_uris,
         "references": [ref.get("url") for ref in cve_item.get("references", []) if ref.get("url")],
         "source_id": "nvd",
-        "source_url": source_url,
+        "source_url": public_source_url,
         "source_provenance": source_provenance,
         "created_at": _now(),
         "updated_at": _now(),
@@ -444,6 +458,8 @@ def ingest_nvd(
     db[INTEL_INGESTION_JOBS].insert_one({
         "job_id": job_id,
         "source_id": "nvd",
+        "org_id": org_id,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now(),
         "record_count": 0,
@@ -513,19 +529,20 @@ def ingest_nvd(
         if processed_count == 0:
             updated_count = 0
             inserted_count = 0
-        _record_dataset_source("nvd", "NVD", source_url, {"page_size": page_size_value, "limited": limited, "processed_count": processed_count})
+        _record_dataset_source("nvd", "NVD", source_url, org_id, tenant_id, {"page_size": page_size_value, "limited": limited, "processed_count": processed_count})
         _finalize_job(job_id, "completed", record_count=processed_count, inserted_count=inserted_count, updated_count=updated_count, skipped_count=skipped_count, limited=limited)
         return {"job_id": job_id, "status": "completed", "record_count": processed_count, "inserted": inserted_count, "updated": updated_count, "skipped": skipped_count, "limited": limited}
     except Exception as exc:
-        logger.exception("NVD ingestion failed")
-        _finalize_job(job_id, "failed", record_count=processed_count, error_message=str(exc), skipped_count=skipped_count, limited=limited)
-        return {"job_id": job_id, "status": "failed", "error": str(exc), "record_count": processed_count, "skipped": skipped_count, "limited": limited}
+        logger.error("NVD ingestion failed: %s", _safe_error_message(exc))
+        _finalize_job(job_id, "failed", record_count=processed_count, error_message=_safe_error_message(exc), skipped_count=skipped_count, limited=limited)
+        return {"job_id": job_id, "status": "failed", "error": _safe_error_message(exc), "record_count": processed_count, "skipped": skipped_count, "limited": limited}
 
 # ---------------------------------------------------------------------------
 # CISA KEV ingestion
 # ---------------------------------------------------------------------------
 
 def _build_cisa_record(org_id: str, tenant_id: str, item: Dict[str, Any], source_url: str) -> Dict[str, Any]:
+    public_source_url = safe_source_url(source_url)
     cve_id = item.get("cveID") or item.get("cve_id")
     if not cve_id:
         raise ValueError("CISA KEV record missing CVE identifier")
@@ -540,13 +557,13 @@ def _build_cisa_record(org_id: str, tenant_id: str, item: Dict[str, Any], source
         "affected_products": [f"{item.get('vendorProject')}:{item.get('product')}" ] if item.get("vendorProject") and item.get("product") else [],
         "references": [item.get("url")] if item.get("url") else [],
         "source_id": "cisa_kev",
-        "source_url": source_url,
+        "source_url": public_source_url,
         "required_action": item.get("requiredAction"),
         "due_date": _parse_iso_datetime(item.get("dueDate")),
         "known_ransomware_campaign_use": bool(item.get("knownRansomwareCampaignUse")),
         "vendor": item.get("vendorProject"),
         "product": item.get("product"),
-        "source_provenance": [{"source_id": "cisa_kev", "name": "CISA KEV", "url": source_url}],
+        "source_provenance": [{"source_id": "cisa_kev", "name": "CISA KEV", "url": public_source_url}],
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -559,6 +576,8 @@ def ingest_cisa_kev(org_id: str, tenant_id: str, url: str | None = None) -> Dict
     db[INTEL_INGESTION_JOBS].insert_one({
         "job_id": job_id,
         "source_id": "cisa_kev",
+        "org_id": org_id,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now(),
         "record_count": 0,
@@ -594,13 +613,13 @@ def ingest_cisa_kev(org_id: str, tenant_id: str, url: str | None = None) -> Dict
         if operations:
             result = _upsert_bulk(INTEL_VULNERABILITIES, operations)
             updated_count += result
-        _record_dataset_source("cisa_kev", "CISA KEV", source_url, {"total_records": processed_count})
+        _record_dataset_source("cisa_kev", "CISA KEV", source_url, org_id, tenant_id, {"total_records": processed_count})
         _finalize_job(job_id, "completed", record_count=processed_count, inserted_count=inserted_count, updated_count=updated_count, skipped_count=skipped_count)
         return {"job_id": job_id, "status": "completed", "record_count": processed_count, "inserted": inserted_count, "updated": updated_count, "skipped": skipped_count}
     except Exception as exc:
-        logger.exception("CISA KEV ingestion failed")
-        _finalize_job(job_id, "failed", record_count=processed_count, error_message=str(exc), skipped_count=skipped_count)
-        return {"job_id": job_id, "status": "failed", "error": str(exc), "record_count": processed_count, "skipped": skipped_count}
+        logger.error("CISA KEV ingestion failed: %s", _safe_error_message(exc))
+        _finalize_job(job_id, "failed", record_count=processed_count, error_message=_safe_error_message(exc), skipped_count=skipped_count)
+        return {"job_id": job_id, "status": "failed", "error": _safe_error_message(exc), "record_count": processed_count, "skipped": skipped_count}
 
 # ---------------------------------------------------------------------------
 # Sigma ingestion
@@ -681,6 +700,8 @@ def ingest_sigma(
     db[INTEL_INGESTION_JOBS].insert_one({
         "job_id": job_id,
         "source_id": "sigma",
+        "org_id": org_id,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now(),
         "record_count": 0,
@@ -732,10 +753,10 @@ def ingest_sigma(
         if operations:
             result = _upsert_bulk(INTEL_DETECTION_RULES, operations)
             updated_count += result
-        _record_dataset_source("sigma", "Sigma", f"https://github.com/{repo_name}", {"branch": branch_name, "cap": max_rule_cap, "files_seen": len(files), "limit_hit": limit_hit})
+        _record_dataset_source("sigma", "Sigma", f"https://github.com/{repo_name}", org_id, tenant_id, {"branch": branch_name, "cap": max_rule_cap, "files_seen": len(files), "limit_hit": limit_hit})
         _finalize_job(job_id, "completed", record_count=processed_count, inserted_count=inserted_count, updated_count=updated_count, skipped_count=skipped_count, limited=limit_hit)
         return {"job_id": job_id, "status": "completed", "record_count": processed_count, "inserted": inserted_count, "updated": updated_count, "skipped": skipped_count, "limited": limit_hit, "complete": not limit_hit}
     except Exception as exc:
-        logger.exception("Sigma ingestion failed")
-        _finalize_job(job_id, "failed", record_count=processed_count, error_message=str(exc), skipped_count=skipped_count, limited=limit_hit)
-        return {"job_id": job_id, "status": "failed", "error": str(exc), "record_count": processed_count, "skipped": skipped_count, "limited": limit_hit}
+        logger.error("Sigma ingestion failed: %s", _safe_error_message(exc))
+        _finalize_job(job_id, "failed", record_count=processed_count, error_message=_safe_error_message(exc), skipped_count=skipped_count, limited=limit_hit)
+        return {"job_id": job_id, "status": "failed", "error": _safe_error_message(exc), "record_count": processed_count, "skipped": skipped_count, "limited": limit_hit}

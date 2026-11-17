@@ -13,6 +13,7 @@ from backend.app.intelligence.config import (
     INTEL_THREAT_RELATIONS, INTEL_VULNERABILITIES,
 )
 from backend.app.config import CHAT_RAG_MIN_SIMILARITY
+from backend.app.intelligence.urls import safe_source_url
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,13 @@ def _format_record(record: dict[str, Any], kind: str, score: float, keyword_scor
                    semantic_score: float | None) -> dict[str, Any]:
     _, _, record_type = COLLECTIONS[kind]
     result = {key: value for key, value in record.items() if key != "_id" and key not in {"embedding"}}
+    if "source_url" in result:
+        result["source_url"] = safe_source_url(result["source_url"])
+    if isinstance(result.get("source_provenance"), list):
+        result["source_provenance"] = [
+            {**source, "url": safe_source_url(source.get("url"))} if isinstance(source, dict) else source
+            for source in result["source_provenance"]
+        ]
     result.update({"record_type": kind, "record_id": _record_id(record, kind),
                    "record_kind": record_type, "score": round(float(score), 6),
                    "keyword_score": round(float(keyword_score), 6),
@@ -186,6 +194,13 @@ def get_intelligence_record(db: Any, *, org_id: str, tenant_id: str,
         return None
     record.pop("embedding", None)
     record.pop("_id", None)
+    if "source_url" in record:
+        record["source_url"] = safe_source_url(record["source_url"])
+    if isinstance(record.get("source_provenance"), list):
+        record["source_provenance"] = [
+            {**source, "url": safe_source_url(source.get("url"))} if isinstance(source, dict) else source
+            for source in record["source_provenance"]
+        ]
     record.update({"record_type": record_type, "record_id": record_id})
     return record
 
@@ -286,4 +301,10 @@ def intelligence_statistics(db: Any, *, org_id: str, tenant_id: str) -> dict[str
     scope = {"org_id": org_id, "tenant_id": tenant_id}
     counts = {kind: int(db[collection].count_documents(scope)) for kind, (collection, _, _) in COLLECTIONS.items()}
     counts["relationships"] = int(db[INTEL_THREAT_RELATIONS].count_documents(scope))
-    return {"counts": counts, "total_records": sum(counts.values())}
+    severities = {level: int(sum(db[COLLECTIONS["cve"][0]].count_documents(
+        {**scope, "severity": value}) for value in (level, level.upper())))
+        for level in ("critical", "high", "medium", "low")}
+    kev_count = int(db[COLLECTIONS["cve"][0]].count_documents(
+        {**scope, "source_provenance.source_id": "cisa_kev"}))
+    return {"counts": counts, "total_records": sum(counts.values()),
+            "vulnerabilities_by_severity": severities, "cisa_kev": kev_count}

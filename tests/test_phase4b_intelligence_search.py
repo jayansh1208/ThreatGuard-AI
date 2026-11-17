@@ -10,6 +10,21 @@ from backend.app.intelligence.search import (
     search_intelligence,
 )
 from backend.app.intelligence.ingestion import _process_capec_items
+from backend.app.intelligence.ingestion import _build_nvd_record, _build_cisa_record
+from backend.app.intelligence.urls import safe_source_url
+
+
+def test_source_url_credentials_are_removed_from_persisted_and_returned_metadata():
+    secret_url = "https://feed.example/nvd?api_key=do-not-expose#token"
+    nvd_record = _build_nvd_record("org", "tenant", {"id": "CVE-2024-1234"}, secret_url)
+    cisa_record = _build_cisa_record("org", "tenant", {"cveID": "CVE-2024-1234"}, secret_url)
+    safe_url = "https://feed.example/nvd"
+
+    assert safe_source_url(secret_url) == safe_url
+    assert nvd_record["source_url"] == safe_url
+    assert nvd_record["source_provenance"][0]["url"] == safe_url
+    assert cisa_record["source_url"] == safe_url
+    assert cisa_record["source_provenance"][0]["url"] == safe_url
 
 
 class Cursor(list):
@@ -21,6 +36,9 @@ class Cursor(list):
 
     def limit(self, size):
         return Cursor(self[:size])
+
+    def skip(self, size):
+        return Cursor(self[size:])
 
 
 class Collection:
@@ -49,6 +67,18 @@ def _matches(row, query):
                 return False
         elif key == "$and":
             if not all(_matches(row, clause) for clause in value):
+                return False
+        elif "." in key:
+            nested = row
+            parts = key.split(".")
+            for part in parts:
+                if isinstance(nested, list):
+                    nested = [item.get(part) for item in nested if isinstance(item, dict)]
+                else:
+                    nested = nested.get(part) if isinstance(nested, dict) else None
+            if isinstance(nested, list) and value in nested:
+                continue
+            if nested != value:
                 return False
         elif isinstance(row.get(key), list) and value in row.get(key):
             continue
@@ -94,6 +124,8 @@ def sample_db():
          "description": "Detects malicious email", "technique_refs": ["attack.t1566"]},
     ])
     db["threat_relationships"] = Collection([])
+    db["ingestion_jobs"] = Collection([])
+    db["dataset_sources"] = Collection([])
     return db
 
 
@@ -149,6 +181,14 @@ def test_statistics_count_only_requested_tenant():
     assert stats["counts"]["cve"] == 1
     assert stats["counts"]["technique"] == 1
     assert stats["total_records"] == 4
+
+
+def test_statistics_include_severity_and_cisa_kev_breakdown():
+    db = sample_db()
+    db["vulnerabilities"].rows[0]["source_provenance"] = [{"source_id": "cisa_kev"}]
+    result = intelligence_statistics(db, org_id="o1", tenant_id="t1")
+    assert result["vulnerabilities_by_severity"] == {"critical": 0, "high": 1, "medium": 0, "low": 0}
+    assert result["cisa_kev"] == 1
 
 
 def test_persisted_relationships_are_labeled_as_inferred_with_evidence():
@@ -246,6 +286,8 @@ def test_intelligence_api_requires_bearer_jwt_and_swagger_declares_bearer(api_cl
         ("/intelligence/records/sigma/sigma-1", "get"),
         ("/intelligence/records/sigma/sigma-1/relationships", "get"),
         ("/intelligence/statistics", "get"),
+        ("/intelligence/jobs", "get"),
+        ("/intelligence/sources", "get"),
         ("/intelligence/mitre", "post"),
         ("/intelligence/capec", "post"),
         ("/intelligence/nvd", "post"),
@@ -265,6 +307,11 @@ def test_intelligence_api_requires_bearer_jwt_and_swagger_declares_bearer(api_cl
         template_path = path.split("?")[0].replace("/records/sigma/", "/records/{record_type}/")
         template_path = template_path.replace("sigma-1", "{record_id}")
         assert openapi["paths"][template_path][method]["security"] == [{"HTTPBearer": []}]
+    nvd_parameters = openapi["paths"]["/intelligence/nvd"]["post"].get("parameters", [])
+    assert any(parameter.get("in") == "header" and parameter.get("name") == "X-NVD-API-Key"
+               for parameter in nvd_parameters)
+    assert not any(parameter.get("in") == "query" and parameter.get("name") == "api_key"
+                   for parameter in nvd_parameters)
 
 
 def test_authenticated_search_pagination_empty_results_and_validation(api_client):
@@ -302,3 +349,25 @@ def test_authenticated_record_relationship_and_statistics_are_tenant_scoped(api_
     assert stats.status_code == 200
     assert stats.json()["counts"]["cve"] == 1
     assert stats.json()["counts"]["relationships"] == 1
+
+
+def test_ingestion_history_and_sources_are_authenticated_paginated_and_tenant_scoped(api_client):
+    client, headers = api_client
+    db = sample_db()
+    # The API fixture's fake database is attached through the patched route dependency.
+    import backend.app.routes.intelligence as intelligence_routes
+    db = intelligence_routes.get_db()
+    db["ingestion_jobs"].rows.extend([
+        {"org_id": "o1", "tenant_id": "t1", "job_id": "job-1", "source_id": "nvd", "status": "completed", "started_at": "2026-01-01", "record_count": 4},
+        {"org_id": "o2", "tenant_id": "t2", "job_id": "job-hidden", "source_id": "sigma", "status": "failed", "started_at": "2026-01-02"},
+    ])
+    db["dataset_sources"].rows.extend([
+        {"org_id": "o1", "tenant_id": "t1", "source_id": "nvd", "name": "NVD", "url": "https://nvd.nist.gov"},
+        {"org_id": "o2", "tenant_id": "t2", "source_id": "secret", "name": "Other", "url": "https://other.test"},
+    ])
+    assert client.get("/intelligence/jobs").status_code == 401
+    assert client.get("/intelligence/sources").status_code == 401
+    jobs = client.get("/intelligence/jobs", params={"page": 1, "page_size": 1}, headers=headers).json()
+    assert jobs["total"] == 1 and jobs["items"][0]["job_id"] == "job-1"
+    sources = client.get("/intelligence/sources", headers=headers).json()
+    assert sources["total"] == 1 and sources["items"][0]["source_id"] == "nvd"

@@ -60,4 +60,4 @@ app.include_router(threats_router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host=FASTAPI_HOST, port=FASTAPI_PORT, reload=False)
+    uvicorn.run("app.main:app", host=FASTAPI_HOST, port=FASTAPI_PORT, reload=False, access_log=False)

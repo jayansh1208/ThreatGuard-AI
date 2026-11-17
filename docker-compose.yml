@@ -3,12 +3,19 @@ services:
     image: mongo:7.0
     container_name: threatguard-mongo
     restart: unless-stopped
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.5"]
     ports:
-      - "27030:27017"
+      - "127.0.0.1:27030:27017"
     environment:
       MONGO_INITDB_DATABASE: threatguard
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   backend:
     build:
@@ -17,7 +24,8 @@ services:
     container_name: threatguard-backend
     restart: unless-stopped
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     environment:
       MONGO_URI: mongodb://mongo:27017
       MONGO_DB: threatguard
@@ -30,6 +38,9 @@ services:
       EMBEDDING_PROVIDER: sentence_transformers
       EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
       EMBEDDING_DEVICE: cpu
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
       EMBEDDING_CACHE_DIR: /root/.cache/threatguard/models
       KB_MAX_UPLOAD_BYTES: 10485760
       KB_CHUNK_SIZE: 1000
@@ -62,7 +73,7 @@ services:
     volumes:
       - embedding_cache:/root/.cache/threatguard/models
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   frontend:
     build:
@@ -75,7 +86,7 @@ services:
     environment:
       BACKEND_URL: http://backend:8000
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
 
 volumes:
   mongo_data:

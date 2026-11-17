@@ -8,7 +8,7 @@ This repo keeps the original course labs untouched. All project work for the app
 
 ## Current phase
 
-Phase 4A adds real local embeddings and tenant-scoped semantic retrieval for the knowledge base. It does not generate chatbot or LLM answers. Phase 3 remains the native Windows host scanner, its risk engine, JSON export workflow, scanner API endpoints, and dashboard integration.
+Phases 1–6 provide JWT-authenticated tenant-scoped APIs, the Windows read-only scanner, knowledge-base RAG, the intelligence-aware Gemini/Ollama/OpenAI chatbot, hybrid cyber-intelligence search and relationships, and the Streamlit Intelligence Dashboard. Phase 7 is an engineering audit and verification pass. The scanner remains a native Windows host workflow.
 
 ## Default architecture
 
@@ -16,7 +16,7 @@ Phase 4A adds real local embeddings and tenant-scoped semantic retrieval for the
 - FastAPI backend on port 8000
 - Streamlit frontend on port 8501
 - Shared database: `threatguard`
-- Local development tenant context only; no production authentication is implemented yet
+- JWT authentication and role-based permissions; tenant and organization filters are derived from the authenticated user
 
 ## Database collections
 
@@ -55,7 +55,27 @@ The initialization script creates the required indexes for tenant-scoped queries
 
 All tenant-scoped repository operations enforce `org_id` and `tenant_id` server-side. Reads, updates, and deletes are limited to the supplied tenant context. Missing tenant or org context raises an error and cross-tenant access is rejected.
 
-This is a development-only tenant context and not production authentication.
+This authenticated tenant context is enforced by the API. A local first administrator can be created with the one-time development bootstrap command described below.
+
+## Run with Docker Compose
+
+In PowerShell, from the project directory, configure a strong `JWT_SECRET_KEY` in `.env` (create the file from `.env.example` first), then start the services:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Edit .env and set a unique JWT_SECRET_KEY before starting.
+docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+The API is at `http://127.0.0.1:8000`, Swagger is at `http://127.0.0.1:8000/docs`, and Streamlit is at `http://127.0.0.1:8501`. Compose binds these services and MongoDB to loopback. The MongoDB data and embedding cache use named volumes; do not use `docker compose down -v` if you need to preserve them.
+
+For a new development database, set the six `THREATGUARD_BOOTSTRAP_*` values in `.env` with a unique admin email, an admin password of at least 12 characters, and organization/tenant IDs and names. Then run this one-time command from the project directory:
+
+```powershell
+docker compose exec backend python -m backend.app.bootstrap_admin --confirm
+```
 
 ## Initialization commands
 

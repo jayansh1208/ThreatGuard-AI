@@ -88,16 +88,22 @@ def render_login() -> None:
     with st.form("login_form", clear_on_submit=False):
         email = st.text_input("Email", autocomplete="username")
         password = st.text_input("Password", type="password", autocomplete="current-password")
+        org_id = st.text_input("Organization ID (only if your email is used in multiple tenants)")
+        tenant_id = st.text_input("Tenant ID (only if your email is used in multiple tenants)")
         submitted = st.form_submit_button("Sign in", type="primary")
     if not submitted:
         return
     if not email.strip() or not password:
         st.warning("Enter both your email address and password.")
         return
+    if bool(org_id.strip()) != bool(tenant_id.strip()):
+        st.warning("Enter both organization and tenant IDs, or leave both blank.")
+        return
     try:
         response = requests.post(
             f"{BACKEND_URL}/auth/login",
-            json={"email": email.strip(), "password": password},
+            json={"email": email.strip(), "password": password,
+                  **({"org_id": org_id.strip(), "tenant_id": tenant_id.strip()} if org_id.strip() and tenant_id.strip() else {})},
             timeout=15,
         )
     except requests.RequestException:

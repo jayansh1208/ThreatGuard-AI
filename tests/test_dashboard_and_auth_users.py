@@ -11,6 +11,7 @@ import backend.app.database.connection as db_connection
 import backend.app.main as app_module
 import backend.app.routes.auth as auth_routes
 import backend.app.routes.dashboard as dashboard_routes
+import backend.app.routes.organizations as organization_routes
 import backend.app.routes.scanner as scanner_routes
 import backend.app.security as security_module
 from backend.app.database.init_db import initialize_database
@@ -146,3 +147,26 @@ def test_dashboard_metrics_and_user_listing(
     users_data = users_res.json()
     assert users_data["total"] >= 1
     assert all("password_hash" not in u for u in users_data["items"])
+
+
+def test_only_super_admin_can_create_an_organization(
+    monkeypatch, dashboard_db, create_test_user, login_test_user,
+):
+    monkeypatch.setattr(db_connection, "get_db", lambda: dashboard_db)
+    monkeypatch.setattr(auth_routes, "get_db", lambda: dashboard_db)
+    monkeypatch.setattr(security_module, "get_db", lambda: dashboard_db)
+    monkeypatch.setattr(organization_routes, "get_db", lambda: dashboard_db)
+    client = TestClient(app_module.app)
+    create_test_user(dashboard_db, org_id="org-roles", tenant_id="tenant-admin",
+                     email="tenant-admin@example.test", role="tenant_admin")
+    create_test_user(dashboard_db, org_id="org-roles", tenant_id="tenant-super",
+                     email="super-admin@example.test", role="super_admin")
+    tenant_headers = login_test_user(client, email="tenant-admin@example.test")
+    super_headers = login_test_user(client, email="super-admin@example.test")
+
+    payload = {"org_id": "org-created", "name": "Created organization"}
+    denied = client.post("/organizations", json=payload, headers=tenant_headers)
+    assert denied.status_code == 403
+    assert dashboard_db.organizations.find_one({"org_id": "org-created"}) is None
+    created = client.post("/organizations", json=payload, headers=super_headers)
+    assert created.status_code == 201

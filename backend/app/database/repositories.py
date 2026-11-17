@@ -151,7 +151,12 @@ class UserRepository(BaseRepository):
             query["org_id"] = org_id
         if tenant_id is not None:
             query["tenant_id"] = tenant_id
-        return self.collection.find_one(query)
+        if org_id is not None or tenant_id is not None:
+            return self.collection.find_one(query)
+        # Email is unique per tenant, not globally. Do not authenticate against
+        # an arbitrary tenant when duplicate addresses exist.
+        matches = list(self.collection.find(query).limit(2))
+        return matches[0] if len(matches) == 1 else None
 
     def get_by_user_id(self, user_id: str, *, org_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         query: Dict[str, Any] = {"user_id": user_id}

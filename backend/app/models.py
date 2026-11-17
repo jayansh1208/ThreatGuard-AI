@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 THREAT_LIFECYCLE_STATUSES = ["Anticipated", "Active", "Evolving", "Resolved"]
 THREAT_SEVERITY_VALUES = ["low", "medium", "high", "critical"]
@@ -69,7 +69,15 @@ class UserRegistration(BaseModel):
 class UserLogin(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
+    org_id: Optional[str] = Field(default=None, min_length=1)
+    tenant_id: Optional[str] = Field(default=None, min_length=1)
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def tenant_context_must_be_complete(self) -> "UserLogin":
+        if (self.org_id is None) != (self.tenant_id is None):
+            raise ValueError("org_id and tenant_id must be supplied together")
+        return self
 
 
 class TokenResponse(BaseModel):

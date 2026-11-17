@@ -130,9 +130,11 @@ INTEL_SCHEMA_MAP: Dict[str, Dict[str, Any]] = {
     },
     "dataset_sources": {
         "bsonType": "object",
-        "required": ["source_id", "name", "url", "last_imported_at"],
+        "required": ["source_id", "org_id", "tenant_id", "name", "url", "last_imported_at"],
         "properties": {
             "source_id": {"bsonType": "string"},
+            "org_id": {"bsonType": "string"},
+            "tenant_id": {"bsonType": "string"},
             "name": {"bsonType": "string"},
             "url": {"bsonType": "string"},
             "last_imported_at": {"bsonType": ["date", "null"]},
@@ -142,10 +144,12 @@ INTEL_SCHEMA_MAP: Dict[str, Dict[str, Any]] = {
     },
     "ingestion_jobs": {
         "bsonType": "object",
-        "required": ["job_id", "source_id", "status", "started_at"],
+        "required": ["job_id", "source_id", "org_id", "tenant_id", "status", "started_at"],
         "properties": {
             "job_id": {"bsonType": "string"},
             "source_id": {"bsonType": "string"},
+            "org_id": {"bsonType": "string"},
+            "tenant_id": {"bsonType": "string"},
             "status": {"bsonType": "string", "enum": ["pending", "running", "completed", "failed"]},
             "started_at": {"bsonType": "date"},
             "completed_at": {"bsonType": ["date", "null"]},
@@ -186,11 +190,10 @@ INTEL_INDEX_DEFINITIONS: Dict[str, Sequence[Sequence[Any]]] = {
         [("embedding_model", ASCENDING)],
     ],
     "dataset_sources": [
-        [("source_id", ASCENDING), {"unique": True}],
-        [("name", ASCENDING)],
+        [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("source_id", ASCENDING), {"unique": True}],
     ],
     "ingestion_jobs": [
         [("job_id", ASCENDING), {"unique": True}],
-        [("source_id", ASCENDING), ("status", ASCENDING)],
+        [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("started_at", ASCENDING)],
     ],
 }

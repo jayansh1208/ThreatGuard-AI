@@ -8,5 +8,9 @@ PyJWT==2.10.1
 pypdf==5.1.0
 python-multipart==0.0.20
 numpy>=1.26,<2
+# CPU-only wheels match EMBEDDING_DEVICE=cpu and avoid CUDA toolkit downloads.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
 sentence-transformers==5.1.2
 httpx>=0.28.1,<1
+PyYAML==6.0.2
