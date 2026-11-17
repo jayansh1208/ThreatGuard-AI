@@ -60,6 +60,11 @@ class ChatCitation(BaseModel):
     chunk_index: int | None
     excerpt: str
     relevance_score: float
+    source_type: str | None = None
+    record_type: str | None = None
+    record_id: str | None = None
+    source_references: list[str] = Field(default_factory=list)
+    relationships: list[dict] = Field(default_factory=list)
 
 
 class ScannerSource(BaseModel):

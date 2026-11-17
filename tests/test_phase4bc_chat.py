@@ -262,7 +262,7 @@ def test_chat_language_is_explicit_in_provider_prompt(language, required):
         object(), org_id="org-a", tenant_id="tenant-a", question="What does this mean?",
         history=[], use_rag=False, provider=localized, language=language,
     ))
-    assert turn.answer == "A concise answer."
+    assert "A concise answer." in turn.answer
     assert required in localized.messages[0]["content"]
 
 

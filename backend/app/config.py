@@ -42,6 +42,9 @@ AI_RATE_LIMIT_PER_MINUTE = int(os.getenv("AI_RATE_LIMIT_PER_MINUTE", "10"))
 CHAT_RAG_ENABLED = os.getenv("CHAT_RAG_ENABLED", "true").lower() == "true"
 CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", "5"))
 CHAT_RAG_MIN_SIMILARITY = float(os.getenv("CHAT_RAG_MIN_SIMILARITY", "0.30"))
+CHAT_INTELLIGENCE_ENABLED = os.getenv("CHAT_INTELLIGENCE_ENABLED", "true").lower() == "true"
+CHAT_INTELLIGENCE_TOP_K = max(1, min(10, int(os.getenv("CHAT_INTELLIGENCE_TOP_K", "5"))))
+CHAT_INTELLIGENCE_RELATIONSHIP_LIMIT = max(1, min(5, int(os.getenv("CHAT_INTELLIGENCE_RELATIONSHIP_LIMIT", "3"))))
 CHAT_SCANNER_CONTEXT_LIMIT = int(os.getenv("CHAT_SCANNER_CONTEXT_LIMIT", "5"))
 
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "sentence_transformers")

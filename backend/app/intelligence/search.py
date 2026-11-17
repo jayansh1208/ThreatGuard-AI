@@ -79,6 +79,15 @@ def search_intelligence(db: Any, *, org_id: str, tenant_id: str, query: str,
     kinds = record_types or list(COLLECTIONS)
     if any(kind not in COLLECTIONS for kind in kinds):
         raise ValueError("Unsupported intelligence record type.")
+    tenant_filter = {"org_id": org_id, "tenant_id": tenant_id}
+    try:
+        has_records = any(db[COLLECTIONS[kind][0]].find_one(tenant_filter, {"_id": 1}) is not None
+                          for kind in kinds)
+    except Exception:
+        raise
+    if not has_records:
+        return {"items": [], "page": page, "page_size": page_size, "total": 0,
+                "query": query, "search_mode": "keyword"}
     try:
         if provider is None:
             from backend.app.knowledge.embeddings import get_embedding_provider
@@ -93,7 +102,6 @@ def search_intelligence(db: Any, *, org_id: str, tenant_id: str, query: str,
     candidates: list[dict[str, Any]] = []
     total = 0
     keep = min((page - 1) * page_size + page_size, 10000)
-    tenant_filter = {"org_id": org_id, "tenant_id": tenant_id}
     for kind in kinds:
         collection_name = COLLECTIONS[kind][0]
         cursor = db[collection_name].find(tenant_filter, {"embedding": 1, "embedding_model": 1,

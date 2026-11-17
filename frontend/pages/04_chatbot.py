@@ -121,6 +121,17 @@ else:
                 page = f" · page {citation['page_number']}" if citation.get("page_number") else ""
                 with st.expander(f"{citation.get('citation_id', 'Source')} · {citation.get('title', 'Document')}{page}"):
                     st.caption(citation.get("source", ""))
+                    if citation.get("record_id"):
+                        st.caption(f"Intelligence record · {citation.get('record_type', 'record')}:{citation['record_id']}")
+                    for reference_index, source_url in enumerate(citation.get("source_references", []), 1):
+                        st.link_button(f"Source reference {reference_index}", source_url,
+                                       key=f"chat_source_{active_id}_{message_index}_{citation.get('citation_id')}_{reference_index}")
+                    for relationship_index, relationship in enumerate(citation.get("relationships", []), 1):
+                        origin = relationship.get("origin", "unknown")
+                        kind = relationship.get("relationship_type", relationship.get("type", "relationship"))
+                        st.markdown(f"**{origin.replace('_', ' ').title()} · {kind}**")
+                        if relationship.get("evidence"):
+                            st.write(relationship["evidence"])
                     st.write(citation.get("excerpt", ""))
             for scan in message.get("scanner_sources", []):
                 with st.expander(f"Stored scanner evidence · {scan.get('scan_id', 'scan')}"):
