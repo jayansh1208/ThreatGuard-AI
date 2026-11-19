@@ -17,6 +17,7 @@ from backend.app.database.init_db import initialize_database
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.chat import router as chat_router
 from backend.app.routes.dashboard import router as dashboard_router
+from backend.app.routes.endpoint import router as endpoint_router
 from backend.app.routes.health import health_router
 from backend.app.routes.intelligence import router as intelligence_router
 from backend.app.routes.knowledge import router as knowledge_router
@@ -48,6 +49,7 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(dashboard_router)
+app.include_router(endpoint_router)
 app.include_router(health_router)
 app.include_router(intelligence_router)
 app.include_router(knowledge_router)

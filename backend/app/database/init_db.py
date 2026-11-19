@@ -31,6 +31,7 @@ def initialize_database(db: Optional[Database] = None) -> Dict[str, object]:
         "users",
         "threats",
         "scan_results",
+        "endpoint_scans",
         "mitigations",
         "kb_documents",
         "kb_chunks",

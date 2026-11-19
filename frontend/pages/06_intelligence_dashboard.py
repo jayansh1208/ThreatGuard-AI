@@ -3,7 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
-from app_common import api_request, can_read, can_write, current_user, show_api_error
+from app_common import api_request, can_read, can_write, current_user, page_header, show_api_error
 from intelligence_dashboard import fetch_payload, graphviz_source, page_count, safe_source_url, sanitize_evidence, search_params
 
 
@@ -12,8 +12,7 @@ if user is None or not can_read(user):
     st.warning("Your session has expired or your role cannot read intelligence records.")
     st.stop()
 
-st.title("Cyber Threat Intelligence")
-st.caption("Tenant scoped intelligence search, evidence, relationships and dataset operations.")
+page_header("Threat Intelligence", "Explore tenant-scoped vulnerability and adversary intelligence, with source evidence and relationships.", "INTELLIGENCE")
 
 with st.spinner("Loading intelligence statistics…"):
     stats, stats_error = fetch_payload(api_request, "/intelligence/statistics")

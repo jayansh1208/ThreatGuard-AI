@@ -3,7 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
-from app_common import api_request, can_write, current_user, show_api_error
+from app_common import api_request, can_write, current_user, page_header, show_api_error, source_reference_html
 
 
 user = current_user()
@@ -14,8 +14,7 @@ if not can_write(user):
     st.error("Your role does not have permission to create AI conversations.")
     st.stop()
 
-st.title("AI Threat Intelligence Chatbot")
-st.caption("Evidence-grounded explanations only. ThreatGuard does not execute generated commands or make host changes.")
+page_header("AI Security Assistant", "Investigate findings with evidence grounded answers from your tenant's intelligence and documents.", "AI INVESTIGATION")
 
 try:
     session_response = api_request("GET", "/chat/sessions", params={"page": 1, "page_size": 100})
@@ -124,8 +123,11 @@ else:
                     if citation.get("record_id"):
                         st.caption(f"Intelligence record · {citation.get('record_type', 'record')}:{citation['record_id']}")
                     for reference_index, source_url in enumerate(citation.get("source_references", []), 1):
-                        st.link_button(f"Source reference {reference_index}", source_url,
-                                       key=f"chat_source_{active_id}_{message_index}_{citation.get('citation_id')}_{reference_index}")
+                        source_link = source_reference_html(f"↗  Source reference {reference_index}", source_url)
+                        if source_link:
+                            st.markdown(source_link, unsafe_allow_html=True)
+                        else:
+                            st.caption(f"Source reference {reference_index} is unavailable because its URL is invalid.")
                     for relationship_index, relationship in enumerate(citation.get("relationships", []), 1):
                         origin = relationship.get("origin", "unknown")
                         kind = relationship.get("relationship_type", relationship.get("type", "relationship"))
@@ -160,9 +162,20 @@ else:
                         st.markdown("### विस्तृत व्याख्या" if message.get("language") == "hi" else "### Detailed explanation")
                         st.markdown(detail)
 
+st.markdown("**Endpoint security prompts**")
+prompt_options = ["Analyze my latest endpoint scan", "Show my critical vulnerabilities",
+                  "What should I fix first?", "Explain the latest threats", "Search my Knowledge Base"]
+prompt_columns = st.columns(5)
+for prompt_col, prompt_text in zip(prompt_columns, prompt_options):
+    if prompt_col.button(prompt_text, key=f"endpoint_prompt_{prompt_text}"):
+        st.session_state["chat_suggested_prompt"] = prompt_text
+        st.rerun()
+
 use_rag = st.checkbox("Retrieve matching knowledge-base excerpts", value=True)
-include_scanner = st.checkbox("Include latest stored scanner records", value=False)
+include_scanner = st.checkbox("Include latest stored scanner and endpoint scan records", value=True)
+st.caption("When enabled, saved scan evidence visible to your authenticated account is included. If no matching scan records exist, the assistant will say so.")
 question = st.chat_input("Ask for an explanation, evidence review, or defensive recommendation")
+question = st.session_state.pop("chat_suggested_prompt", None) or question
 if question:
     if not active_id:
         try:

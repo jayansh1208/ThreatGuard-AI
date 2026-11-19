@@ -1,258 +1,150 @@
 # ThreatGuard AI
 
-ThreatGuard AI is a multi-tenant MongoDB-backed security intelligence platform implemented in a dedicated project directory, isolated from the existing coursework.
+ThreatGuard AI is a multi-tenant security operations workspace for threat intelligence, Windows endpoint evidence, vulnerability review, security documents, and AI-assisted investigations. It uses FastAPI, MongoDB, Streamlit, and an optional Windows endpoint agent.
 
-## Scope
+## Features
 
-This repo keeps the original course labs untouched. All project work for the application lives under the root-level `threatguard-ai` directory.
+- JWT authentication and role-based access, with organization and tenant scope enforced by the API.
+- Dark Streamlit SOC dashboard with API-backed threat metrics, stored scan activity, and quick links to existing tools.
+- Windows read-only scanner history and an optional local endpoint agent for on-demand host scans.
+- CVE, ATT&CK, CAPEC, Sigma, and CISA KEV intelligence search, ingestion, source details, and relationships.
+- Tenant-scoped Knowledge Base uploads and semantic retrieval for PDF, TXT, and Markdown references.
+- AI Security Assistant with conversation history, Gemini/OpenAI/Ollama provider support, source citations, and authorized stored scan context.
+- MongoDB-backed audit, scan, document, intelligence, and conversation records.
 
-## Current phase
+## Architecture
 
-Phases 1–6 provide JWT-authenticated tenant-scoped APIs, the Windows read-only scanner, knowledge-base RAG, the intelligence-aware Gemini/Ollama/OpenAI chatbot, hybrid cyber-intelligence search and relationships, and the Streamlit Intelligence Dashboard. Phase 7 is an engineering audit and verification pass. The scanner remains a native Windows host workflow.
+| Service | Technology | Local address |
+| --- | --- | --- |
+| Database | MongoDB 7 | `127.0.0.1:27030` |
+| API | FastAPI | `http://127.0.0.1:8000` |
+| API docs | Swagger UI | `http://127.0.0.1:8000/docs` |
+| Web application | Streamlit | `http://127.0.0.1:8501` |
+| Endpoint agent bridge | Python on Windows host | `http://127.0.0.1:8765` |
 
-## Default architecture
+The app stores tenant records in MongoDB collections including `threats`, `scan_results`, `endpoint_scans`, `kb_documents`, `kb_chunks`, `chat_sessions`, and `audit_logs`. Named `mongo_data` and `embedding_cache` volumes persist across container restarts.
 
-- MongoDB 7 on port 27030
-- FastAPI backend on port 8000
-- Streamlit frontend on port 8501
-- Shared database: `threatguard`
-- JWT authentication and role-based permissions; tenant and organization filters are derived from the authenticated user
+## Quick start with Docker Compose
 
-## Database collections
-
-The database initializes these collections:
-
-- `organizations`
-- `tenants`
-- `users`
-- `threats`
-- `scan_results`
-- `mitigations`
-- `kb_documents`
-- `kb_chunks`
-- `chat_sessions`
-- `audit_logs`
-- `metrics_snapshots`
-
-Each tenant-scoped record includes `org_id`, `tenant_id`, `created_at`, and `updated_at` where relevant.
-
-## Schema validation
-
-The validation layer enforces required fields, MongoDB types, exact threat lifecycle values, valid severity values, and tenant scoping. Invalid threat statuses are rejected at the database layer.
-
-Threat lifecycle statuses must be exactly:
-
-- `Anticipated`
-- `Active`
-- `Evolving`
-- `Resolved`
-
-## Index strategy
-
-The initialization script creates the required indexes for tenant-scoped queries and lookup patterns, including unique indexes for high-value identifiers and composite indexes for tenant + status/time filtering.
-
-## Tenant isolation design
-
-All tenant-scoped repository operations enforce `org_id` and `tenant_id` server-side. Reads, updates, and deletes are limited to the supplied tenant context. Missing tenant or org context raises an error and cross-tenant access is rejected.
-
-This authenticated tenant context is enforced by the API. A local first administrator can be created with the one-time development bootstrap command described below.
-
-## Run with Docker Compose
-
-In PowerShell, from the project directory, configure a strong `JWT_SECRET_KEY` in `.env` (create the file from `.env.example` first), then start the services:
+Use PowerShell from the repository root:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-# Edit .env and set a unique JWT_SECRET_KEY before starting.
+```
+
+Edit `.env` and set a unique `JWT_SECRET_KEY` with at least 32 characters. Set the AI provider and its key if you want to use the assistant. The template defaults to Gemini; keys are blank until you supply them.
+
+```powershell
 docker compose up -d --build
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-The API is at `http://127.0.0.1:8000`, Swagger is at `http://127.0.0.1:8000/docs`, and Streamlit is at `http://127.0.0.1:8501`. Compose binds these services and MongoDB to loopback. The MongoDB data and embedding cache use named volumes; do not use `docker compose down -v` if you need to preserve them.
-
-For a new development database, set the six `THREATGUARD_BOOTSTRAP_*` values in `.env` with a unique admin email, an admin password of at least 12 characters, and organization/tenant IDs and names. Then run this one-time command from the project directory:
+Create the first administrator only for a new development database. Set the six `THREATGUARD_BOOTSTRAP_*` variables in `.env`, then run this one-time command:
 
 ```powershell
 docker compose exec backend python -m backend.app.bootstrap_admin --confirm
 ```
 
-## Initialization commands
+Sign in at the Streamlit address above. The UI and API use the existing authentication and role rules. Compose binds services to loopback for local access. **Do not use `docker compose down -v`** if MongoDB records or the embedding cache must be retained.
 
-From the workspace root:
+## AI provider configuration
 
-```bash
-python .\threatguard-ai\backend\app\database\init_db.py
+Choose one provider in `.env` using `AI_PROVIDER`:
+
+- `gemini`: set `GEMINI_API_KEY`; optional model setting is `GEMINI_MODEL` (default `gemini-2.5-flash`).
+- `openai`: set `OPENAI_API_KEY`; optional model setting is `OPENAI_MODEL` (default `gpt-4o-mini`).
+- `ollama`: run Ollama separately. For Docker Desktop, set `OLLAMA_BASE_URL=http://host.docker.internal:11434` and install the model named by `OLLAMA_MODEL` yourself.
+
+The application never starts Ollama or exposes provider keys through the UI or API. Use `CHAT_RAG_ENABLED`, `CHAT_RAG_TOP_K`, `CHAT_RAG_MIN_SIMILARITY`, `CHAT_INTELLIGENCE_ENABLED`, `CHAT_INTELLIGENCE_TOP_K`, `CHAT_INTELLIGENCE_RELATIONSHIP_LIMIT`, and `CHAT_SCANNER_CONTEXT_LIMIT` to tune retrieval. AI responses are bounded by configured history, context, token, timeout, and rate limits.
+
+## Windows endpoint agent
+
+The separate agent runs on Windows 10/11 with Python 3.11 or newer. It performs read-only checks and submits bounded reports to the authenticated API. Review [endpoint-agent/README.md](endpoint-agent/README.md) for installation, privacy details, and limitations.
+
+From PowerShell:
+
+```powershell
+cd endpoint-agent
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python agent.py --check-connection
+python agent.py --serve
 ```
 
-Or from the project root:
+The bridge runs in the foreground, requires consent, and is not installed as a service or startup task. Use the Endpoint Security page to request an authenticated scan. Stop the agent with Ctrl+C. Endpoint scan reports are accessible to their authenticated uploader; legacy scanner records are tenant-scoped. The assistant includes stored scanner and endpoint evidence for the authenticated account when enabled, and reports an empty state when none is available.
 
-```bash
-cd .\threatguard-ai
-python .\backend\app\database\init_db.py
-```
+## Native Windows scanner
 
-The script is safe to run repeatedly. It creates missing collections, applies validators, creates indexes, and verifies database readiness without destroying data.
-
-## API endpoints
-
-Available core endpoints:
-
-- `POST /organizations`
-- `GET /organizations`
-- `POST /tenants`
-- `GET /tenants`
-- `POST /threats`
-- `GET /threats`
-- `GET /threats/{threat_id}`
-- `PATCH /threats/{threat_id}/status`
-- `POST /auth/register`
-- `POST /auth/login`
-- `GET /auth/me`
-- `POST /scanner/scans`
-- `GET /scanner/scans`
-- `GET /scanner/scans/{scan_id}`
-- `GET /scanner/scans/{scan_id}/summary`
-
-Example request payload for a threat:
-
-```json
-{
-  "org_id": "org-1",
-  "tenant_id": "tenant-a",
-  "threat_id": "thr-001",
-  "title": "Privilege escalation attempt",
-  "description": "Suspicious admin activity detected.",
-  "severity": "high",
-  "lifecycle_status": "Active",
-  "source": "SIEM",
-  "confidence": 0.91,
-  "tags": ["identity", "admin"]
-}
-```
-
-For development use, pass `org_id` and `tenant_id` explicitly in the request/route context. This is not an authentication mechanism.
-
-## Test commands
-
-Run the Phase 1 tests against the dedicated test database:
-
-```bash
-cd .\threatguard-ai
-python -m pytest .\tests\test_phase1.py -q
-```
-
-## Windows scanner design
-
-The Phase 3 CLI runs on the Windows host and uses read-only PowerShell queries for processes, network connections, startup entries, and Defender status. A collector failure is recorded as metadata; it never substitutes demo or sample findings. Raw process, network, and startup records are observations and are not themselves security findings. Findings are included only when a detector supplies them. Reports label injected/demo findings as `simulated` and host collection as `live`.
-
-Each collector reports its name, status, number of items collected, error code/message when applicable, and scan timestamp. Overall completeness is `complete`, `partial`, or `failed`. When any collector has incomplete coverage, the report discloses that coverage and withholds severity and score. Defender access restrictions are reported as `permission_restricted` with Defender state `unknown`; the scanner does not elevate privileges.
-
-Run from the project directory:
+The existing CLI scanner is separate from the agent bridge. It runs on the Windows host and gathers read-only process, network, startup, and Defender observations. It does not execute remediation commands. Incomplete collector coverage is disclosed rather than presented as a clean bill of health; raw inventory observations are not automatically treated as findings.
 
 ```powershell
 python -m scanner.cli --limit 20
 ```
 
-`--limit N` caps the total findings in the combined report, after deterministic concatenation in process, network, then startup order. The default is 20; zero is allowed and a negative value is rejected. Collector item counts remain independent of this report finding limit.
+The optional `--limit` caps the combined report findings (default 20; zero is allowed). The scanner can export its report as JSON for the authenticated scanner API workflow.
 
-## Phase 4A knowledge base
+## Knowledge Base and embeddings
 
-The implementation reuses the existing `kb_documents` and `kb_chunks` collections and adds fields and tenant-scoped indexes through the existing schema initializer. The Phase 4A implementation was checked against the existing database before changes; both collections were empty. No existing records or MongoDB volumes are dropped.
+The backend uses `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional vectors) by default and stores embeddings in MongoDB. The first embedding request may download the model; Compose stores its cache in the persistent `embedding_cache` volume. CPU is the default device; set `EMBEDDING_DEVICE=cuda` only when the container has a compatible runtime.
 
-The production embedding provider is `sentence-transformers/all-MiniLM-L6-v2`, using genuine model output with 384-dimensional unit-normalized vectors. It defaults to CPU, loads once per backend process, and batches input in groups of 32. The first embedding request downloads the model if it is not cached; subsequent loads use `EMBEDDING_CACHE_DIR`. Set `EMBEDDING_DEVICE=cuda` to request GPU acceleration when a compatible PyTorch/CUDA runtime is installed. There is no automatic fake-vector or keyword fallback.
+The Knowledge Base accepts PDF, UTF-8 TXT, and Markdown files up to `KB_MAX_UPLOAD_BYTES` (10 MiB by default). Retrieval returns tenant-visible excerpts and source metadata. Uploaded documents are parsed as data and are never executed.
 
-Ingestion accepts PDF, UTF-8 TXT, and Markdown files up to `KB_MAX_UPLOAD_BYTES` (10 MiB by default). Text is normalized and chunked by character count using `KB_CHUNK_SIZE` and `KB_CHUNK_OVERLAP`. PDF chunks retain their source page. A tenant-scoped SHA-256 check detects duplicate content. Uploaded bytes are parsed as data and are never executed.
+## Intelligence data
 
-The local MongoDB retrieval path computes cosine similarity over the authenticated tenant's vectors and returns the top results with filenames, page numbers, chunk indexes, excerpts, and relevance scores. Atlas Vector Search is optional through `KB_ATLAS_VECTOR_SEARCH_ENABLED` and `KB_ATLAS_VECTOR_INDEX`. The Streamlit Knowledge Base page displays retrieved excerpts as source material; it clearly states that no generated answer is produced in this phase.
+Threat intelligence datasets are imported through the Intelligence page by a user with write permission. Imports use public upstream datasets and are bounded by settings such as `NVD_INITIAL_MAX_RECORDS`, `NVD_PAGE_SIZE`, `NVD_REQUEST_DELAY`, `INGESTION_BATCH_SIZE`, and `INGESTION_TIMEOUT_SECONDS`. Source and ingestion-job records are retained for the tenant. Dataset imports are not part of container startup.
 
-Authenticated API endpoints:
+## Useful API route groups
 
-- `POST /knowledge/documents` (multipart field `file`)
-- `GET /knowledge/documents`
-- `GET /knowledge/documents/{document_id}`
-- `DELETE /knowledge/documents/{document_id}`
-- `POST /knowledge/search` with `{"query": "...", "top_k": 5}`
+- `/auth` — login, logout, current user, and user administration.
+- `/dashboard/metrics` — tenant dashboard metrics and recent activity.
+- `/scanner/scans` — existing scanner report history and details.
+- `/endpoint/scans` — authenticated endpoint scan upload, history, and details.
+- `/intelligence` — search, statistics, records, relationships, sources, jobs, and imports.
+- `/knowledge` — document management and semantic search.
+- `/chat` — provider status, conversations, messages, citations, and explanations.
+- `/threats`, `/organizations`, and `/tenants` — security records and administration.
 
-All organization and tenant filters come from the authenticated user context. Upload, search, list, and delete actions follow existing RBAC permissions and write relevant events to `audit_logs`.
+Open `/docs` for the API schema. Tenant and organization identifiers are taken from the authenticated user context rather than trusted from arbitrary request bodies.
 
-The existing running Docker containers were left untouched. After reviewing this phase, rebuild the backend and frontend services from this directory to activate these source changes in the containers; the existing `mongo_data` volume is retained, and `embedding_cache` is a separate persistent cache volume.
+## Development and tests
 
-## Phase 4B/4C AI analyst chat
+Install backend dependencies and run tests from the repository root:
 
-The chatbot reuses the existing JWT/RBAC layer, `chat_sessions` collection, Phase 4A embedding provider and tenant-scoped semantic retrieval. The default provider is `ollama` at `http://localhost:11434`, with model `llama3.2:3b`; the application does not install, launch, download, or start Ollama automatically. The API and other pages still start when Ollama is unavailable. Chat requests then return a safe provider-unavailable response. OpenAI is optional and is used only when `AI_PROVIDER=openai` is explicitly selected and a key is configured.
-
-Configure chat through `.env` (copy `.env.example`, then set only the provider you intend to use):
-
-```dotenv
-AI_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2:3b
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-AI_TEMPERATURE=0.2
-AI_MAX_TOKENS=1000
-AI_TIMEOUT_SECONDS=60
-AI_HISTORY_WINDOW=8
-AI_CONTEXT_MAX_CHARS=8000
-AI_MAX_MESSAGE_CHARS=4000
-AI_RATE_LIMIT_PER_MINUTE=10
-CHAT_RAG_ENABLED=true
-CHAT_RAG_TOP_K=5
-CHAT_RAG_MIN_SIMILARITY=0.30
-CHAT_SCANNER_CONTEXT_LIMIT=5
+```powershell
+python -m pip install -r backend/requirements.txt
+python -m pytest -q
 ```
 
-For local native Python, run Ollama separately and set `OLLAMA_BASE_URL=http://localhost:11434`. For the Docker backend to reach Ollama on the Windows host, set `OLLAMA_BASE_URL=http://host.docker.internal:11434`. Ollama remains outside default Compose startup. To use OpenAI, set `AI_PROVIDER=openai` and supply `OPENAI_API_KEY` in the local `.env`; keys are sent only to the OpenAI request header, are never logged or returned, and are never stored in MongoDB. The provider test endpoint makes a real request only when explicitly called. Automated tests use mocked providers and do not make paid calls.
+Frontend dependencies are listed in `frontend/requirements.txt`. Compile the Streamlit application with:
 
-For a separate local Ollama installation, install Ollama for the host OS, start its service manually, and install a model such as `llama3.2:3b` using Ollama's own model management. The app never starts Ollama or executes model-generated commands. CPU embeddings remain the default; the chatbot does not load an LLM model into the application process.
+```powershell
+python -m compileall frontend
+```
 
-The analyst prompt treats retrieved documents and scanner records as untrusted evidence, rejects instructions embedded in those sources, prohibits host actions, and requires uncertainty to be explicit. Scanner context comes only from stored records matching the authenticated user's `org_id` and `tenant_id`; only stored finding descriptions and severity are passed, without raw command lines. Document citations are generated from retrieved chunks that pass `CHAT_RAG_MIN_SIMILARITY`; the answer's `[S#]` markers are checked against those actual citations. When retrieval finds no relevant source, the response clearly labels any explanation as general guidance. RAG can be globally disabled with `CHAT_RAG_ENABLED=false` or per request through the authenticated API.
-
-Chat sessions are stored in the existing `chat_sessions` collection, scoped to organization, tenant, and owning user. Message content, timestamps, provider/model, citations, scanner references, and token usage are stored; credentials and full prompts are not added to audit records. Context sent to the provider is bounded by `AI_HISTORY_WINDOW` and `AI_CONTEXT_MAX_CHARS`, while each request is limited by `AI_MAX_MESSAGE_CHARS` and `AI_RATE_LIMIT_PER_MINUTE`.
-
-Authenticated API endpoints:
-
-- `POST /chat/sessions`
-- `GET /chat/sessions?page=1&page_size=20`
-- `GET /chat/sessions/{session_id}?message_offset=0&message_limit=50`
-- `PATCH /chat/sessions/{session_id}` with `{"title": "..."}`
-- `DELETE /chat/sessions/{session_id}`
-- `POST /chat/sessions/{session_id}/messages` with `{"content": "...", "use_rag": true, "include_scanner_context": false}`
-- `POST /chat/ask` with the same message fields and optional `session_id`
-- `GET /chat/providers` (returns provider/model and a boolean key-configured flag only)
-- `POST /chat/providers/test` (explicitly contacts the selected provider; never returns secrets)
-
-The Streamlit Chatbot page supports login, conversation history, rename/delete, provider status/testing, example prompts, optional RAG, and explicit latest-scan context. It displays document citations and scanner evidence separately. Responses are not streamed in this phase; the interface shows a loading state while a bounded provider request completes.
-
-Troubleshooting:
-
-- `Ollama is unavailable`: start Ollama manually or explicitly configure OpenAI; no provider switch happens automatically.
-- `The configured Ollama model is not available locally`: install the exact `OLLAMA_MODEL` on the host.
-- `OpenAI rejected the configured API key`: check the local environment configuration; the key is not echoed in the error.
-- No document citations: upload tenant-visible PDF/TXT/Markdown references, or lower `CHAT_RAG_MIN_SIMILARITY` with care.
-- Docker's running backend/frontend images do not hot-reload source. After review, safely rebuild only those services from this directory with `docker compose up -d --build backend frontend`. This does not delete volumes; do not use `down -v`. Compose keeps Ollama outside default startup.
-
-Phase 4B/4C tests use temporary MongoDB databases and mocked LLM providers. Run them with the full suite using `python -m pytest -q`; the separate Phase 4A real embedding test remains opt-in. No paid provider call is part of the suite.
-
-Install backend dependencies from the project directory with `python -m pip install -r .\backend\requirements.txt`. Run regular tests with `python -m pytest -q`. The real model integration test is opt-in so the model is not downloaded on every test run:
+Endpoint agent tests and chat tests use mocked collectors/providers and test tenant boundaries without contacting paid AI APIs. The real embedding integration test is opt-in:
 
 ```powershell
 $env:THREATGUARD_RUN_EMBEDDING_INTEGRATION = "1"
-python -m pytest .\tests\test_phase4a_knowledge.py -q
+python -m pytest tests/test_phase4a_knowledge.py -q
 ```
 
-## Phase 0 validation
+## Security and data notes
 
-The startup layer continues to work as expected:
+- Never commit `.env`, API keys, JWT secrets, agent credentials, scan reports containing host data, or MongoDB volumes.
+- `.env.example` contains blank secret fields and safe local defaults. Copy it to `.env` and configure secrets locally.
+- Endpoint scans are read-only observations. The agent does not remediate hosts, install persistence, or execute AI-generated commands.
+- Knowledge documents and retrieved records are treated as untrusted evidence by the assistant.
+- Preserve `mongo_data` when updating the app. Do not use `docker compose down -v` to restart services.
 
-- MongoDB is available on `localhost:27030`
-- FastAPI health endpoint returns `200`
-- Streamlit frontend remains available on port `8501`
-- The scanner runs as a native host-side workflow and can export JSON without affecting the running Docker containers
+## Repository layout
 
-## Implementation notes
-
-- New code remains inside `threatguard-ai` only.
-- Course labs and root project files remain untouched.
-- No MongoDB containers or volumes are recreated or deleted.
+```text
+backend/          FastAPI routes, authentication, database, AI, retrieval, and ingestion
+frontend/         Streamlit pages, shared styling, and theme configuration
+endpoint-agent/   Optional Windows read-only endpoint scanner and local bridge
+scanner/          Existing native scanner
+tests/            Backend, endpoint, intelligence, knowledge, and chatbot tests
+docker-compose.yml
+```

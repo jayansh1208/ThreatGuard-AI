@@ -3,7 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
-from app_common import api_request, can_write, current_user, show_api_error
+from app_common import api_request, can_write, current_user, page_header, show_api_error
 
 
 user = current_user()
@@ -11,11 +11,10 @@ if user is None:
     st.warning("Your session has expired. Return to the sign-in page.")
     st.stop()
 
-st.title("Knowledge Base")
-st.caption("Tenant-scoped PDF, TXT and Markdown references with real semantic retrieval. Search results are source excerpts, not generated answers.")
+page_header("Knowledge Base", "Search tenant-approved documents with semantic retrieval. Results are source excerpts, not generated answers.", "SECURITY KNOWLEDGE")
 
 if can_write(user):
-    st.subheader("Upload a reference")
+    st.subheader("Add a reference")
     st.caption("Files are treated as untrusted data. Supported formats: PDF, TXT and Markdown. The backend enforces the upload-size limit.")
     uploaded_file = st.file_uploader("Choose a document", type=["pdf", "txt", "md", "markdown"])
     if uploaded_file is not None and st.button("Upload and process", type="primary"):
@@ -72,7 +71,8 @@ for document in documents:
                     st.rerun()
                 show_api_error(deleted, "The document could not be deleted.")
 
-st.subheader("Semantic search")
+st.subheader("Search your security knowledge")
+st.caption("Describe a control, vulnerability, or procedure to find relevant passages across uploaded references.")
 query = st.text_input("Ask about tenant references", max_chars=1000)
 top_k = st.slider("Maximum excerpts", min_value=1, max_value=20, value=5)
 if st.button("Search knowledge"):

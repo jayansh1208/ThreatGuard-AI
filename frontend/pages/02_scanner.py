@@ -3,7 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
-from app_common import api_request, current_user, show_api_error
+from app_common import api_request, current_user, page_header, show_api_error
 
 
 user = current_user()
@@ -11,8 +11,7 @@ if user is None:
     st.warning("Your session has expired. Return to the sign-in page.")
     st.stop()
 
-st.title("Windows Security Scanner")
-st.caption("Read-only host observations stored for your tenant. This interface never executes remediation commands.")
+page_header("Windows Security Scanner", "Review read only host observations submitted to your tenant. ThreatGuard does not execute remediation commands.", "ENDPOINT SECURITY")
 
 try:
     response = api_request(

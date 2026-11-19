@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -150,6 +152,39 @@ def test_semantic_retrieval_returns_cosine_rank_and_source(rag_db):
     assert results[0]["filename"] == "malware.md"
     assert results[0]["source"] == "malware.md"
     assert results[0]["chunk_index"] == 0
+
+
+def test_embedding_provider_is_initialized_once_for_concurrent_first_requests(monkeypatch):
+    import backend.app.knowledge.embeddings as embeddings
+
+    constructed = 0
+    constructed_lock = Lock()
+
+    class FakeProvider(EmbeddingProvider):
+        @property
+        def model_name(self):
+            return "concurrency-test-provider"
+
+        @property
+        def dimension(self):
+            return 2
+
+        def embed(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    def construct():
+        nonlocal constructed
+        with constructed_lock:
+            constructed += 1
+        return FakeProvider()
+
+    monkeypatch.setattr(embeddings, "_provider", None)
+    monkeypatch.setattr(embeddings, "SentenceTransformerProvider", construct)
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        providers = list(executor.map(lambda _index: embeddings.get_embedding_provider(), range(48)))
+
+    assert constructed == 1
+    assert all(provider is providers[0] for provider in providers)
 
 
 def test_retrieval_and_delete_are_tenant_scoped(rag_db):

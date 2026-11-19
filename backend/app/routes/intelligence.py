@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from backend.app.security import enforce_permission, get_current_user
 from backend.app.intelligence.ingestion import (
@@ -17,6 +19,7 @@ from backend.app.intelligence.config import (
     MITRE_ATTACK_URL,
     NVD_API_URL,
     NVD_API_KEY,
+    NVD_INITIAL_MAX_RECORDS,
     NVD_PAGE_SIZE,
     SIGMA_BRANCH,
     SIGMA_MAX_RULES,
@@ -158,19 +161,36 @@ def trigger_capec_ingestion(
 def trigger_nvd_ingestion(
     url: str | None = Query(default=None, description="Override NVD API URL"),
     api_key: str | None = Header(default=None, alias="X-NVD-API-Key", description="Optional NVD API key; never send credentials in a URL"),
-    page_size: int | None = Query(default=None, description="NVD page size"),
+    page_size: int = Query(default=NVD_PAGE_SIZE, ge=1, le=200, description="NVD page size"),
+    max_records: int = Query(default=NVD_INITIAL_MAX_RECORDS, ge=1, le=5000,
+                             description="Maximum CVE records to process in this explicit import"),
+    last_modified_after: datetime | None = Query(default=None, description="Start of an incremental NVD modification window"),
+    last_modified_before: datetime | None = Query(default=None, description="End of an incremental NVD modification window"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     enforce_permission(current_user, "write_threats")
     org_id, tenant_id = _tenant_context(current_user)
     source_url = url or NVD_API_URL
+    if bool(last_modified_after) != bool(last_modified_before):
+        raise HTTPException(status_code=422, detail="Both NVD modification window timestamps are required.")
+    if last_modified_after and last_modified_before:
+        if (last_modified_after.tzinfo is None or last_modified_before.tzinfo is None
+                or last_modified_after >= last_modified_before):
+            raise HTTPException(status_code=422, detail="NVD modification timestamps must be timezone-aware and ordered.")
+        start = last_modified_after.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        end = last_modified_before.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    else:
+        start = end = None
     try:
         result = ingest_nvd(
             org_id,
             tenant_id,
             url=source_url,
             api_key=api_key or NVD_API_KEY,
-            page_size=page_size or NVD_PAGE_SIZE,
+            page_size=page_size,
+            max_records=max_records,
+            last_modified_after=start,
+            last_modified_before=end,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail="NVD ingestion failed.") from exc
@@ -196,7 +216,8 @@ def trigger_cisa_ingestion(
 def trigger_sigma_ingestion(
     repository: str | None = Query(default=None, description="Override Sigma repository"),
     branch: str | None = Query(default=None, description="Override Sigma branch"),
-    max_rules: int | None = Query(default=None, description="Upper cap for imported Sigma rules"),
+    max_rules: int = Query(default=SIGMA_MAX_RULES, ge=1, le=500,
+                            description="Upper cap for imported Sigma rules"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     enforce_permission(current_user, "write_threats")
@@ -207,7 +228,7 @@ def trigger_sigma_ingestion(
             tenant_id,
             repository=repository or SIGMA_REPOSITORY,
             branch=branch or SIGMA_BRANCH,
-            max_rules=max_rules or SIGMA_MAX_RULES,
+            max_rules=max_rules,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Sigma ingestion failed.") from exc

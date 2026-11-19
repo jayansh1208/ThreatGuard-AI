@@ -144,7 +144,7 @@ async def _send_message(session_id: str, payload: ChatMessageRequest,
     try:
         provider = get_provider()
         turn = await generate_chat_turn(
-            get_db(), org_id=org_id, tenant_id=tenant_id, question=payload.content,
+            get_db(), org_id=org_id, tenant_id=tenant_id, user_id=user_id, question=payload.content,
             history=session.get("messages", []), use_rag=payload.use_rag,
             include_scanner=payload.include_scanner_context, provider=provider,
             language=payload.language,

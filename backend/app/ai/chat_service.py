@@ -198,7 +198,7 @@ def _retrieve_intelligence(db: Database, *, org_id: str, tenant_id: str, questio
 
 
 async def generate_chat_turn(
-    db: Database, *, org_id: str, tenant_id: str, question: str,
+    db: Database, *, org_id: str, tenant_id: str, user_id: str | None = None, question: str,
     history: list[dict[str, Any]], use_rag: bool = True,
     include_scanner: bool = False, provider: LLMProvider | None = None,
     retriever: Callable[..., list[dict[str, Any]]] | None = None,
@@ -249,7 +249,7 @@ async def generate_chat_turn(
     if use_scanner:
         try:
             scanner_sources = await asyncio.to_thread(
-                load_scanner_evidence, db, org_id=org_id, tenant_id=tenant_id,
+                load_scanner_evidence, db, org_id=org_id, tenant_id=tenant_id, user_id=user_id,
             )
         except Exception:
             logger.exception("Scanner context retrieval failed; continuing without scanner records")
@@ -271,7 +271,10 @@ async def generate_chat_turn(
     answer = remove_unknown_citation_tags(
         result.content.strip()[:20000], {source["citation_id"] for source in included_citations}, allowed_urls,
     )
-    grounded_intel_text = json.dumps(included_citations, ensure_ascii=False, default=str).upper()
+    grounded_intel_text = json.dumps(
+        {"intelligence": included_citations, "endpoint_scanner_evidence": included_scanner},
+        ensure_ascii=False, default=str,
+    ).upper()
     grounded_intel_ids = set(_INTELLIGENCE_IDENTIFIER.findall(grounded_intel_text))
     unsupported_answer_ids = set(_INTELLIGENCE_IDENTIFIER.findall(answer.upper())) - grounded_intel_ids
     if unsupported_answer_ids:
@@ -291,9 +294,8 @@ async def generate_chat_turn(
                          else "No relevant knowledge-base source was retrieved. General guidance: ")
         answer = no_source + answer
     requested_ids = {value.upper() for value in _INTELLIGENCE_IDENTIFIER.findall(question)}
-    available_intel_text = " ".join(
-        json.dumps(item, ensure_ascii=False, default=str) for item in intel_citations
-    ).upper()
+    available_intel_text = (" ".join(json.dumps(item, ensure_ascii=False, default=str) for item in intel_citations)
+                            + json.dumps(included_scanner, ensure_ascii=False, default=str)).upper()
     missing_requested_ids = requested_ids - set(_INTELLIGENCE_IDENTIFIER.findall(available_intel_text))
     if config.CHAT_INTELLIGENCE_ENABLED and not intel_citations:
         if kb_citations and language != "hi":

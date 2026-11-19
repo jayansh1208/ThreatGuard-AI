@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import io
+import contextlib
 import uuid
+import zipfile
 
 import httpx
 import pytest
@@ -137,12 +140,47 @@ def test_nvd_pagination_and_network_failure(monkeypatch, intel_db):
     result = intel_ingestion.ingest_nvd("org-nvd", "tenant-nvd-a", page_size=2)
     assert result["status"] == "completed"
     assert result["record_count"] == 3
+    assert result["inserted"] == 3
+    assert result["updated"] == 0
     assert intel_db["vulnerabilities"].count_documents({"org_id": "org-nvd", "tenant_id": "tenant-nvd-a"}) == 3
+
+    monkeypatch.setattr(intel_ingestion.httpx, "Client", lambda *args, **kwargs: StaticClient([page_one, page_two]))
+    result = intel_ingestion.ingest_nvd("org-nvd", "tenant-nvd-a", page_size=2)
+    assert result["inserted"] == 0
+    assert result["updated"] == 3
 
     monkeypatch.setattr(intel_ingestion.httpx, "Client", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.RequestError("offline")))
     result = intel_ingestion.ingest_nvd("org-nvd", "tenant-nvd-b", page_size=2)
     assert result["status"] == "failed"
     assert "offline" in result["error"]
+
+
+def test_nvd_initial_import_limit_stops_before_next_page(monkeypatch, intel_db):
+    monkeypatch.setattr(intel_ingestion, "get_db", lambda: intel_db)
+    calls = []
+    payload = {"totalResults": 10, "vulnerabilities": [
+        {"cve": {"id": "CVE-2026-7001", "descriptions": [{"lang": "en", "value": "First"}]}},
+        {"cve": {"id": "CVE-2026-7002", "descriptions": [{"lang": "en", "value": "Second"}]}},
+    ]}
+
+    class CaptureClient(StaticClient):
+        def get(self, url, params=None, headers=None):
+            calls.append(dict(params or {}))
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(intel_ingestion.httpx, "Client", lambda *args, **kwargs: CaptureClient())
+    result = intel_ingestion.ingest_nvd("org-limit", "tenant-limit", page_size=2,
+                                        max_records=1, request_delay=0,
+                                        last_modified_after="2026-01-01T00:00:00Z",
+                                        last_modified_before="2026-01-02T00:00:00Z")
+    assert result["status"] == "completed"
+    assert result["record_count"] == 1
+    assert result["inserted"] == 1
+    assert result["limited"] is True
+    assert len(calls) == 1
+    assert calls[0]["lastModStartDate"].startswith("2026-01-01")
+    assert calls[0]["lastModEndDate"].startswith("2026-01-02")
+    assert intel_db["vulnerabilities"].count_documents({"org_id": "org-limit", "tenant_id": "tenant-limit"}) == 1
 
 
 def test_cisa_kev_ingestion_merges_nvd_and_cisa_without_duplicates(monkeypatch, intel_db):
@@ -182,8 +220,45 @@ def test_cisa_kev_ingestion_merges_nvd_and_cisa_without_duplicates(monkeypatch, 
     saved = intel_db["vulnerabilities"].find_one({"org_id": "org-cisa", "tenant_id": "tenant-cisa-1", "cve_id": "CVE-2024-4242"})
     assert saved is not None
     assert saved["description"] == "NVD description"
+    assert saved["known_ransomware_campaign_use"] is True
+    assert result["inserted"] == 0
+    assert result["updated"] == 1
     assert len(saved["source_provenance"]) == 2
     assert intel_db["vulnerabilities"].count_documents({"org_id": "org-cisa", "tenant_id": "tenant-cisa-1", "cve_id": "CVE-2024-4242"}) == 1
+
+
+def test_cisa_unknown_ransomware_value_is_not_truthy_and_not_a_date():
+    record = intel_ingestion._build_cisa_record(
+        "org", "tenant", {"cveID": "CVE-2024-5555", "dateAdded": "2024-03-01T00:00:00Z",
+                           "knownRansomwareCampaignUse": "Unknown"},
+        "https://www.cisa.gov/kev.json",
+    )
+    assert record["known_ransomware_campaign_use"] is None
+    assert record["ransomware_campaign_use_source_value"] == "Unknown"
+    assert record["cisa_date_added"].isoformat().startswith("2024-03-01")
+
+
+def test_capec_official_xml_archive_parser_preserves_ids_and_explicit_attack_mappings():
+    xml = b'''<Attack_Pattern_Catalog xmlns="http://capec.mitre.org/capec-3">
+      <Attack_Patterns><Attack_Pattern ID="66" Name="SQL Injection">
+        <Description>Injected SQL attack pattern.</Description><Taxonomy_Mappings>
+          <Taxonomy_Mapping Taxonomy_Name="ATTACK"><Entry_ID>T1190</Entry_ID></Taxonomy_Mapping>
+        </Taxonomy_Mappings>
+      </Attack_Pattern><Attack_Pattern ID="67" Name="Retired Pattern" Status="Deprecated">
+        <Description>Deprecated source record.</Description>
+      </Attack_Pattern></Attack_Patterns>
+    </Attack_Pattern_Catalog>'''
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.writestr("2000.xml", xml)
+    item = intel_ingestion._capec_xml_items(archive.getvalue())[0]
+    assert len(intel_ingestion._capec_xml_items(archive.getvalue())) == 1
+    record = intel_ingestion._process_capec_items([item])[0]
+    assert record["pattern_id"] == "CAPEC-66"
+    assert record["name"] == "SQL Injection"
+    assert record["description"] == "Injected SQL attack pattern."
+    assert record["technique_ids"] == ["T1190"]
+    assert record["references"] == ["https://capec.mitre.org/data/definitions/66.html"]
 
 
 def test_sigma_parsing_and_invalid_rule_handling(monkeypatch, intel_db):
@@ -214,8 +289,10 @@ def test_sigma_parsing_and_invalid_rule_handling(monkeypatch, intel_db):
     raw_invalid = {"path": "rules/windows/bad_rule.yml", "content": invalid_rule}
 
     class SigmaClient:
+        instances = 0
+
         def __init__(self, *args, **kwargs):
-            pass
+            type(self).instances += 1
 
         def __enter__(self):
             return self
@@ -233,11 +310,58 @@ def test_sigma_parsing_and_invalid_rule_handling(monkeypatch, intel_db):
     result = intel_ingestion.ingest_sigma("org-sigma", "tenant-sigma-1", max_rules=10)
     assert result["status"] == "completed"
     assert result["record_count"] == 1
+    assert result["inserted"] == 1
+    assert result["skipped"] == 1
+    assert SigmaClient.instances == 1
     saved = intel_db["detection_rules"].find_one({"org_id": "org-sigma", "tenant_id": "tenant-sigma-1", "rule_id": "Sample.Rule"})
     assert saved is not None
     assert saved["source_path"] == "rules/windows/process_creation.yml"
     assert saved["technique_refs"] == ["attack.t1059"]
     assert saved["sigma"].startswith("title:")
+
+
+def test_sigma_archive_fallback_is_disk_backed_and_applies_rule_cap(monkeypatch):
+    archive_data = io.BytesIO()
+    with zipfile.ZipFile(archive_data, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("sigma-master/rules/windows/one.yml", "title: one")
+        archive.writestr("sigma-master/rules/windows/two.yml", "title: two")
+
+    class StreamResponse:
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, _size):
+            yield archive_data.getvalue()
+
+    monkeypatch.setattr(intel_ingestion.httpx, "stream",
+                        lambda *args, **kwargs: contextlib.nullcontext(StreamResponse()))
+    path, root, files = intel_ingestion._download_sigma_archive("SigmaHQ/sigma", "master", 1)
+    try:
+        assert root == "sigma-master"
+        assert files == ["rules/windows/one.yml"]
+        with zipfile.ZipFile(path) as archive:
+            assert archive.read(f"{root}/{files[0]}") == b"title: one"
+    finally:
+        os.unlink(path)
+
+
+def test_sigma_tree_discovery_excludes_repository_test_fixtures(monkeypatch):
+    class TreeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def get(self, url, headers=None):
+            return FakeResponse({"tree": [
+                {"path": "rules/windows/valid.yml", "type": "blob"},
+                {"path": "regression_data/rules/windows/fixture/info.yml", "type": "blob"},
+                {"path": "rules/windows/readme.md", "type": "blob"},
+            ]})
+
+    monkeypatch.setattr(intel_ingestion.httpx, "Client", lambda *args, **kwargs: TreeClient())
+    assert intel_ingestion._discover_sigma_files("SigmaHQ/sigma", "master", 100) == ["rules/windows/valid.yml"]
 
 
 def test_org_and_tenant_isolation_and_job_tracking(monkeypatch, intel_db, create_test_user, login_test_user):

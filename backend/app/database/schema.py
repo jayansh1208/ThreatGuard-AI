@@ -85,6 +85,19 @@ SCHEMA_MAP: Dict[str, Dict[str, Any]] = {
             "updated_at": {"bsonType": ["date", "null"]},
         },
     },
+    "endpoint_scans": {
+        "bsonType": "object",
+        "required": ["org_id", "tenant_id", "user_id", "scan_id", "status", "host_id", "os_name", "generated_at", "findings", "coverage", "inventory", "summary", "created_at"],
+        "properties": {
+            "org_id": {"bsonType": "string"}, "tenant_id": {"bsonType": "string"},
+            "user_id": {"bsonType": "string"},
+            "scan_id": {"bsonType": "string"}, "status": {"bsonType": "string", "enum": ["completed"]},
+            "host_id": {"bsonType": "string"}, "os_name": {"bsonType": "string"},
+            "generated_at": {"bsonType": "date"}, "findings": {"bsonType": "array"},
+            "coverage": {"bsonType": "object"}, "inventory": {"bsonType": "object"},
+            "summary": {"bsonType": "object"}, "created_at": {"bsonType": "date"},
+        },
+    },
     "mitigations": {
         "bsonType": "object",
         "required": ["org_id", "tenant_id", "mitigation_id", "threat_id", "title", "execution_status", "created_at"],
@@ -224,6 +237,10 @@ INDEX_DEFINITIONS: Dict[str, Sequence[Sequence[Any]]] = {
     "users": [[("tenant_id", ASCENDING), ("email", ASCENDING), {"unique": True}], [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), {"unique": True}]],
     "threats": [[("tenant_id", ASCENDING), ("lifecycle_status", ASCENDING), ("created_at", ASCENDING)], [("tenant_id", ASCENDING), ("severity", ASCENDING)]],
     "scan_results": [[("tenant_id", ASCENDING), ("created_at", ASCENDING)]],
+    "endpoint_scans": [
+        [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), ("scan_id", ASCENDING), {"unique": True, "name": "uq_endpoint_scan_user_id"}],
+        [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), ("created_at", ASCENDING)],
+    ],
     "mitigations": [[("tenant_id", ASCENDING), ("execution_status", ASCENDING)]],
     "kb_documents": [
         [("tenant_id", ASCENDING), ("content_hash", ASCENDING)],

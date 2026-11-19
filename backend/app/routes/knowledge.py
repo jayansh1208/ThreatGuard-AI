@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -18,6 +19,7 @@ from backend.app.models_knowledge import (
 from backend.app.security import enforce_permission, get_current_user
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+logger = logging.getLogger(__name__)
 
 
 def _context(current_user: dict[str, Any]) -> tuple[str, str, str]:
@@ -46,6 +48,8 @@ async def upload_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Knowledge document ingestion failed (filename=%s, org_id=%s, tenant_id=%s)",
+                         file.filename, org_id, tenant_id)
         raise HTTPException(status_code=503, detail="Document embedding or storage failed.") from exc
     AuditLogRepository(get_db()).log(
         org_id=org_id, tenant_id=tenant_id, actor_id=actor_id,
@@ -118,6 +122,8 @@ def search_knowledge(
         results = search_documents(get_db(), org_id=org_id, tenant_id=tenant_id,
                                    query=query, top_k=payload.top_k)
     except Exception as exc:
+        logger.exception("Knowledge semantic retrieval failed (org_id=%s, tenant_id=%s, query_length=%d)",
+                         org_id, tenant_id, len(query))
         raise HTTPException(status_code=503, detail="Semantic retrieval is unavailable.") from exc
     AuditLogRepository(get_db()).log(
         org_id=org_id, tenant_id=tenant_id, actor_id=actor_id,
