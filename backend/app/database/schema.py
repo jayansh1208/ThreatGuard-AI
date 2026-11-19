@@ -92,6 +92,8 @@ SCHEMA_MAP: Dict[str, Dict[str, Any]] = {
             "org_id": {"bsonType": "string"}, "tenant_id": {"bsonType": "string"},
             "user_id": {"bsonType": "string"},
             "scan_id": {"bsonType": "string"}, "status": {"bsonType": "string", "enum": ["completed"]},
+            "scan_request_id": {"bsonType": ["string", "null"]},
+            "endpoint_id": {"bsonType": ["string", "null"]},
             "host_id": {"bsonType": "string"}, "os_name": {"bsonType": "string"},
             "generated_at": {"bsonType": "date"}, "findings": {"bsonType": "array"},
             "coverage": {"bsonType": "object"}, "inventory": {"bsonType": "object"},
@@ -239,6 +241,7 @@ INDEX_DEFINITIONS: Dict[str, Sequence[Sequence[Any]]] = {
     "scan_results": [[("tenant_id", ASCENDING), ("created_at", ASCENDING)]],
     "endpoint_scans": [
         [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), ("scan_id", ASCENDING), {"unique": True, "name": "uq_endpoint_scan_user_id"}],
+        [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), ("scan_request_id", ASCENDING), {"unique": True, "name": "uq_endpoint_scan_user_request", "partialFilterExpression": {"scan_request_id": {"$type": "string"}}}],
         [("org_id", ASCENDING), ("tenant_id", ASCENDING), ("user_id", ASCENDING), ("created_at", ASCENDING)],
     ],
     "mitigations": [[("tenant_id", ASCENDING), ("execution_status", ASCENDING)]],

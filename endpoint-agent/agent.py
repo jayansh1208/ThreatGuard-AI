@@ -5,15 +5,10 @@ import getpass
 import json
 import os
 import sys
-import threading
 import time
-import uuid
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
-import requests
 
 from api_client import ThreatGuardClient
+from agent_server import serve_agent
 from scanner import run_scan
 
 
@@ -39,91 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         if not _confirm("Allow the authenticated ThreatGuard dashboard to request local read-only scans and upload findings while this process runs?"):
             print("Agent bridge cancelled.")
             return 0
-        states: dict[str, dict] = {}
-        lock = threading.Lock()
-
-        class Handler(BaseHTTPRequestHandler):
-            def _send(self, status: int, body: dict) -> None:
-                raw = json.dumps(body).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(raw)
-
-            def log_message(self, *_args) -> None:
-                return
-
-            def do_GET(self) -> None:
-                parsed = urlparse(self.path)
-                if parsed.path == "/health":
-                    self._send(200, {"connected": True, "message": "Agent ready"})
-                    return
-                if parsed.path.startswith("/scans/"):
-                    authorization = self.headers.get("Authorization", "")
-                    if not authorization.startswith("Bearer "):
-                        self._send(401, {"detail": "Sign in to ThreatGuard first"})
-                        return
-                    try:
-                        auth = requests.get(f"{client.config.backend_url}/auth/me",
-                                            headers={"Authorization": authorization},
-                                            timeout=client.config.timeout_seconds, verify=client.config.verify_tls)
-                        auth.raise_for_status()
-                    except Exception:
-                        self._send(401, {"detail": "ThreatGuard session is invalid or expired"})
-                        return
-                    scan_id = parsed.path.rsplit("/", 1)[-1]
-                    with lock:
-                        state = states.get(scan_id)
-                    self._send(200, state or {"status": "unknown"})
-                    return
-                self._send(404, {"detail": "Not found"})
-
-            def do_POST(self) -> None:
-                if urlparse(self.path).path != "/scans":
-                    self._send(404, {"detail": "Not found"})
-                    return
-                authorization = self.headers.get("Authorization", "")
-                if not authorization.startswith("Bearer "):
-                    self._send(401, {"detail": "Sign in to ThreatGuard first"})
-                    return
-                token = authorization[7:]
-                try:
-                    auth = requests.get(f"{client.config.backend_url}/auth/me", headers={"Authorization": f"Bearer {token}"},
-                                  timeout=client.config.timeout_seconds, verify=client.config.verify_tls)
-                    auth.raise_for_status()
-                except Exception:
-                    self._send(401, {"detail": "ThreatGuard session is invalid or expired"})
-                    return
-                with lock:
-                    if any(item.get("status") == "running" for item in states.values()):
-                        self._send(409, {"detail": "A scan is already running"})
-                        return
-                    scan_id = f"request-{uuid.uuid4().hex}"
-                    states[scan_id] = {"status": "running", "started_at": datetime.now(timezone.utc).isoformat()}
-                def run_and_upload() -> None:
-                    try:
-                        report = run_scan()
-                        headers = {"Authorization": f"Bearer {token}"}
-                        response = client.session.post(f"{client.config.backend_url}/endpoint/scans", json=report, headers=headers,
-                                                       timeout=client.config.timeout_seconds, verify=client.config.verify_tls)
-                        response.raise_for_status()
-                        with lock:
-                            states[scan_id] = {"status": "completed", "scan_id": report["scan_id"], "summary": report["summary"]}
-                    except Exception:
-                        with lock:
-                            states[scan_id] = {"status": "failed", "message": "Scan or upload failed. Check agent output and backend connectivity."}
-                threading.Thread(target=run_and_upload, daemon=True).start()
-                self._send(202, {"request_id": scan_id, "status": "running"})
-
-        host = os.getenv("THREATGUARD_AGENT_BIND", "0.0.0.0")
-        port = int(os.getenv("THREATGUARD_AGENT_PORT", "8765"))
-        print(f"ThreatGuard endpoint agent is listening on {host}:{port}; stop it with Ctrl+C.")
-        try:
-            ThreadingHTTPServer((host, port), Handler).serve_forever()
-        except KeyboardInterrupt:
-            print("\nAgent stopped.")
+        serve_agent(client)
         return 0
     if args.check_connection:
         try:

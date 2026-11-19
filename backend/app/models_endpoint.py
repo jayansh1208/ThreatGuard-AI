@@ -34,6 +34,7 @@ class EndpointFinding(BaseModel):
 
 class EndpointScanUpload(BaseModel):
     scan_id: str = Field(pattern=r"^endpoint-[a-f0-9]{32}$")
+    scan_request_id: str | None = Field(default=None, pattern=r"^request-[a-f0-9]{32}$")
     host_id: str = Field(min_length=1, max_length=128)
     os_name: str = Field(min_length=1, max_length=200)
     generated_at: datetime

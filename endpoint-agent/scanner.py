@@ -3,7 +3,7 @@ from __future__ import annotations
 import platform
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from network_monitor import collect_listeners
 from software_inventory import collect_software_inventory
@@ -23,10 +23,30 @@ def _finding(title: str, description: str, category: str, severity: str, compone
 
 
 def run_scan(*, security_collector=collect_windows_security, software_collector=collect_software_inventory,
-             network_collector=collect_listeners, osv_checker=query_osv) -> dict[str, Any]:
-    security = security_collector()
-    software = software_collector()
-    network = network_collector()
+             network_collector=collect_listeners, osv_checker=query_osv,
+             scan_id: str | None = None,
+             progress_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
+    def stage(name: str) -> None:
+        if progress_callback:
+            progress_callback(name)
+
+    stage("Collecting Windows security information")
+    try:
+        security = (security_collector(progress_callback=progress_callback)
+                    if security_collector is collect_windows_security and progress_callback else security_collector())
+    except Exception:
+        security = {"system": {"name": platform.system()},
+                    "coverage": {"windows_security": "failed", "firewall": "failed"}, "facts": {}}
+    stage("Collecting installed software")
+    try:
+        software = software_collector()
+    except Exception:
+        software = {"status": "failed", "items": [], "packages": []}
+    stage("Inspecting listening TCP ports")
+    try:
+        network = network_collector()
+    except Exception:
+        network = {"status": "failed", "items": []}
     facts = security.get("facts") or {}
     findings: list[dict[str, Any]] = []
     if facts.get("antivirus_enabled") is False:
@@ -70,7 +90,10 @@ def run_scan(*, security_collector=collect_windows_security, software_collector=
     coverage = {**security.get("coverage", {}), "software_inventory": software.get("status", "unknown"),
                 "listening_ports": network.get("status", "unknown"), "vulnerability_intelligence": "requires_verification"}
     # OSV is queried only for inventory entries with explicit package ecosystem coordinates.
-    for item in software.get("packages", []):
+    packages = software.get("packages", [])
+    if packages:
+        stage("Checking vulnerability intelligence")
+    for item in packages:
         check = osv_checker(item)
         coverage["vulnerability_intelligence"] = "success" if check.get("status") in {"vulnerable", "no_known_match"} else "requires_verification"
         for match in check.get("matches", []):
@@ -81,8 +104,9 @@ def run_scan(*, security_collector=collect_windows_security, software_collector=
                                      {"version": item.get("version"), "osv_id": match.get("id"), "cvss_score": match.get("cvss_score"), "retrieved_at": match.get("retrieved_at")},
                                      "Update to a version that the package maintainer documents as fixed; verify the applicable release before changing software.",
                                      source="OSV", cve=match["cve"], rationale="OSV returned a match for the exact package ecosystem, name, and installed version."))
+    stage("Generating scan report")
     counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "informational")}
-    return {"scan_id": f"endpoint-{uuid.uuid4().hex}", "host_id": platform.node()[:128] or "unknown-host",
+    return {"scan_id": scan_id or f"endpoint-{uuid.uuid4().hex}", "host_id": platform.node()[:128] or "unknown-host",
             "os_name": str(security.get("system", {}).get("name") or platform.system())[:200],
             "generated_at": datetime.now(timezone.utc).isoformat(), "findings": findings, "coverage": coverage,
             "summary": {"total_findings": len(findings), "counts": counts},

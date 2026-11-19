@@ -22,6 +22,7 @@ from software_inventory import collect_software_inventory
 from vulnerability_checker import query_osv
 from windows_security import collect_windows_security
 import backend.app.routes.endpoint as endpoint_routes
+import backend.app.security as security_module
 from backend.app.ai.context_manager import load_scanner_evidence
 from backend.app.models_endpoint import EndpointScanUpload
 
@@ -115,17 +116,36 @@ def test_endpoint_storage_is_idempotent_and_tenant_scoped(monkeypatch):
         def __getitem__(self, name): return getattr(self, name)
     test_db = DB()
     monkeypatch.setattr(endpoint_routes, "_db", lambda: test_db)
+    monkeypatch.setattr(security_module, "get_db", lambda: test_db)
     payload = EndpointScanUpload(
         scan_id="endpoint-" + "a" * 32, host_id="host-one", os_name="Windows",
+        scan_request_id="request-" + "b" * 32,
         generated_at=datetime.now(timezone.utc), findings=[], coverage={"defender": "unknown"}, inventory={},
     )
     first = endpoint_routes.upload_scan(payload, user)
     second = endpoint_routes.upload_scan(payload, user)
     assert first["scan_id"] == second["scan_id"]
+    assert first["scan_request_id"] == payload.scan_request_id
+    assert first["endpoint_id"] == payload.host_id
     assert test_db.endpoint_scans.count_documents({"scan_id": payload.scan_id}) == 1
+    resolved = endpoint_routes.get_scan_by_request(payload.scan_request_id, user)
+    assert resolved["scan_id"] == payload.scan_id
+    conflicting = payload.model_copy(update={"scan_id": "endpoint-" + "c" * 32})
+    with pytest.raises(HTTPException) as exc:
+        endpoint_routes.upload_scan(conflicting, user)
+    assert exc.value.status_code == 409
     with pytest.raises(HTTPException) as exc:
         endpoint_routes.get_scan(payload.scan_id, other)
     assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        endpoint_routes.get_scan_by_request(payload.scan_request_id, other)
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        endpoint_routes.get_scan_by_request("request-" + "c" * 32, user)
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        endpoint_routes.get_scan_by_request(payload.scan_request_id, {**user, "role": "viewer"})
+    assert exc.value.status_code == 403
     with pytest.raises(Exception):
         EndpointScanUpload.model_validate({**payload.model_dump(), "surprise": "rejected"})
 
@@ -133,8 +153,11 @@ def test_endpoint_storage_is_idempotent_and_tenant_scoped(monkeypatch):
 def test_dashboard_explains_disconnected_agent_without_fake_progress():
     source = (ROOT / "frontend" / "pages" / "07_endpoint_security.py").read_text(encoding="utf-8")
     assert "ThreatGuard Endpoint Agent is not connected. Start the local agent to perform a scan." in source
-    assert "Refresh scan status" in source
-    assert "running" in source and "completed" in source
+    assert '@st.fragment(run_every="2s"' in source
+    assert "Security Scan Completed Successfully!" in source
+    assert "endpoint_scan_id" in source and "scan_selector" in source
+    assert "Download TXT Report" in source and "Download JSON Report" in source and "Download CSV Findings" in source
+    assert "Report status" in source or "report_generated" in source
 
 
 def test_chat_retrieval_scopes_endpoint_findings_to_user_and_tenant():

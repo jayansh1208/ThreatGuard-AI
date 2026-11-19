@@ -73,7 +73,7 @@ python agent.py --check-connection
 python agent.py --serve
 ```
 
-The bridge runs in the foreground, requires consent, and is not installed as a service or startup task. Use the Endpoint Security page to request an authenticated scan. Stop the agent with Ctrl+C. Endpoint scan reports are accessible to their authenticated uploader; legacy scanner records are tenant-scoped. The assistant includes stored scanner and endpoint evidence for the authenticated account when enabled, and reports an empty state when none is available.
+The bridge runs in the foreground, requires consent, and is not installed as a service or startup task. Use the Endpoint Security page to request an authenticated scan. The dashboard shows actual agent stages while scanning, blocks duplicate requests, and recovers active status from the URL and the agent's persisted state journal after a browser refresh. It reports success only after the backend stores the matching scan ID, then selects and opens that report automatically. Scan History retains earlier reports with per-scan TXT, JSON, and CSV downloads and a full report view. Stop the agent with Ctrl+C. Endpoint scan reports are accessible to their authenticated uploader; legacy scanner records are tenant-scoped. The assistant includes stored scanner and endpoint evidence for the authenticated account when enabled, and reports an empty state when none is available.
 
 ## Native Windows scanner
 
